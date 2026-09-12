@@ -173,7 +173,32 @@ Email + OTP only, via Supabase Auth — no phone verification. Only name and ema
 
 ## 11. CI/CD
 
-- `build-apk.yml` — Capacitor + Gradle build, produces an APK artifact and/or GitHub Release. Requires an Android signing keystore stored as a repo secret (not yet configured — Phase 1 of ROADMAP.md).
-- `deploy-functions.yml` — deploys Supabase Edge Functions on push to `server/functions/`. Requires a Supabase access token and project ref stored as repo secrets (not yet configured — Phase 1 of ROADMAP.md).
+- `build-apk.yml` — Capacitor + Gradle build, produces an APK artifact and/or GitHub Release. Reads Android signing secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and writes `GOOGLE_SERVICES_JSON` out to `client/android/app/google-services.json` during the build. Note: the keystore is PKCS12 format, which does not support separate store/key passwords — `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD` hold the same value.
+- `deploy-functions.yml` — deploys Supabase Edge Functions on push to `server/functions/`. Reads `SUPABASE_ACCESS_TOKEN` (scoped to this project only, Edge Functions: Read-write, no other permissions) and `SUPABASE_PROJECT_REF`.
+
+Neither workflow file exists yet (Phase 11); the secrets they'll read are provisioned and confirmed in place ahead of that phase.
 
 GitHub Actions handles all building; no local terminal build steps are ever required.
+
+## 12. Provisioned Infrastructure
+
+Non-secret identifiers only — actual credentials live in GitHub Actions secrets, never in this file. Established during Phase 1 (2026-09-12).
+
+| Item | Value |
+|---|---|
+| Android package name | `com.gc.matchemojisdaily` |
+| Firebase project ID | `match-emojis-daily` |
+| Firebase project number | `103425074643` |
+| Firebase storage bucket | `match-emojis-daily.firebasestorage.app` |
+| Supabase project ref | `wgkcxixocfzydawurluh` |
+| Supabase region | South Asia (Mumbai) |
+| AdMob App ID | `ca-app-pub-6922359485200410~4812181773` |
+| AdMob Rewarded ad unit ID | `ca-app-pub-6922359485200410/1441491988` |
+| AdMob Interstitial ad unit ID | `ca-app-pub-6922359485200410/2621132707` |
+| AdMob Banner ad unit ID | `ca-app-pub-6922359485200410/6368806025` |
+| Android keystore alias | `match-emojis-daily` |
+| Android keystore validity | 30 years (until 2056) |
+
+GitHub Actions secrets on record (names only): `GOOGLE_SERVICES_JSON`, `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`.
+
+Deliberately not yet done: custom SMTP for Supabase Auth (dev-mode sender in use), Firebase Crashlytics SDK integration (deferred to Phase 4), production AdMob ad unit IDs (current IDs are development/test-appropriate, Phase 12 swaps to production), Google Play Console account.

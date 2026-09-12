@@ -1,17 +1,17 @@
 # Roadmap
 
-Last updated: 2026-09-11 (seed).
+Last updated: 2026-09-12.
 
 - [x] **Phase 0 — Repo scaffold & docs.** Seed `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`, `docs/SESSIONS.md`; establish folder structure.
-- [ ] **Phase 1 — Infra & secrets (manual, one-time).**
-  - **Package name.** Decide the Android application ID (e.g. `com.yourname.matchemojisdaily`) before registering anything below — Firebase, AdMob, and the Capacitor config all reference it, and it's painful to change later.
-  - **Supabase.** Create project. Enable email OTP auth provider. Wire a custom SMTP provider (e.g. Resend, Postmark, SendGrid) into Supabase Auth — the built-in email sender is rate-limited and dev-only, not suitable for real signups. Generate an access token and note the project ref, both stored as GitHub Actions secrets for `deploy-functions.yml`. Stays on the Free tier initially.
-  - **Firebase (Analytics + Crashlytics only).** Create project. Register the Android app using the package name above. Download `google-services.json` — store as a GitHub secret and write it to `client/android/app/` during CI, rather than committing it directly, since the repo is public. Enable Crashlytics in the console.
-  - **Google AdMob.** Create account. Register the app (needs the package name). Create ad units: rewarded video (ad-life + bonus-round entry), interstitial (capped), banner (optional). Use test ad unit IDs for development; production IDs are a Phase 12 item. Link the AdMob account to the Firebase project once both exist, for revenue-by-cohort Analytics reporting.
-  - **Android signing.** Generate a release keystore. Store the keystore file (base64-encoded), keystore password, key alias, and key password as GitHub Actions secrets for `build-apk.yml`.
-  - **GitHub repo settings.** Enable GitHub Pages so `privacy-policy.html` is actually served. Add all secrets above once the accounts they come from exist. (The connected GitHub integration currently lacks write access to this repo — not blocking, since the file-delivery workflow is manual-upload-only, but worth fixing separately if direct pushes are ever wanted.)
-  - **Branding assets.** Placeholder app icon / adaptive icon and splash screen — needed for a real-looking Capacitor Android build even before final art exists.
-  - **Google Play Console account** (not blocking, but has long lead time). One-time $25 fee plus identity verification, which has been taking Google noticeably longer in some cases recently — worth starting early even though actual submission is Phase 12.
+- [ ] **Phase 1 — Infra & secrets (manual, one-time).** Mostly complete — see below.
+  - [x] **Package name.** Decided: `com.gc.matchemojisdaily`.
+  - [x] **Supabase.** Project created (`match-emojis-daily`, South Asia / Mumbai region, project ref `wgkcxixocfzydawurluh`). Email provider enabled with OTP (6-digit code, 10–15 min expiry, secure email change on). Access token generated, scoped to this project with Edge Functions: Read-write only, and stored as the `SUPABASE_ACCESS_TOKEN` GitHub secret; project ref stored as `SUPABASE_PROJECT_REF`. Custom SMTP provider still deliberately deferred until real users exist — Supabase's dev-mode sender is fine for now.
+  - [x] **Firebase (Analytics + Crashlytics only).** Project created and linked to Google Analytics. Android app registered under the package name above. `google-services.json` downloaded and stored as the `GOOGLE_SERVICES_JSON` GitHub secret (not committed directly, since the repo is public). Crashlytics enablement deferred until real app code exists to integrate the SDK into (Phase 4) — nothing meaningful to toggle before then.
+  - [x] **Google AdMob.** Account created. App registered under the same package name. All three ad units created (Rewarded, Interstitial, Banner) with real IDs on record. Linked to the Firebase project for revenue-by-cohort Analytics reporting. Production ad unit IDs stay a Phase 12 item; current IDs are usable for development.
+  - [x] **Android signing.** Release keystore generated (30-year validity, alias `match-emojis-daily`). Stored as 4 GitHub secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Note: modern PKCS12 keystores don't support separate store/key passwords — both secrets hold the same value, corrected from the original plan's assumption of two distinct passwords.
+  - [x] **GitHub repo settings.** GitHub Pages enabled. All 6 secrets above added and confirmed via screenshot. (The connected GitHub integration still lacks write access to this repo — not blocking, since the file-delivery workflow is manual-upload-only.)
+  - [ ] **Branding assets.** Placeholder app icon / adaptive icon and splash screen — not yet generated. No account dependency; can be done anytime.
+  - [ ] **Google Play Console account** (not blocking, but has long lead time). Not yet started.
 - [ ] **Phase 2 — Database schema.** Postgres tables/migrations in Supabase for `users`, `daily_game_definitions`, `player_daily_order`, `attempts`, `daily_stats`, `weekly_stats`, `all_time_stats`, `user_year_activity` (ARCHITECTURE.md Section 6).
 - [ ] **Phase 3 — Auth.** Email OTP signup/login flow; profile screen for changing name and email (email change re-verified via OTP).
 - [ ] **Phase 4 — Core game client.** Port the existing HTML/CSS/JS match-3 prototype into `client/src/`; implement the 26-slot theme system, fixed per-slot move targets, shared per-attempt life pool, forced-sequential play, and bonus-round trigger.
