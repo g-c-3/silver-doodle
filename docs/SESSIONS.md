@@ -4,6 +4,22 @@ Most recent entry first.
 
 ---
 
+**2026-09-12 — Phase 4 core game client session**
+
+Built: `client/src/js/game-engine.js` (new) — pure match-3 logic: seeded RNG (cyrb53 hash + mulberry32), 8x8 board generation guaranteeing no pre-existing matches and at least one legal move, match detection, the scoring formula from ARCHITECTURE.md Section 3.2 including H+V combo doubling via union-find grouping, and gravity/refill cascade resolution. `client/src/js/attempt.js` (new) — the attempt state machine: 26-slot forced-sequential play against the fixed per-slot move-target table, a shared 3-life pool, one ad-earned life per level offered on timeout, a bonus round triggered every 3rd completed slot mixing emoji from the last 3 completed themes, tap-select-then-tap-adjacent swap input, and `{seed, moves[]}` payload assembly. `client/src/index.html`, `client/src/js/app.js`, `client/src/css/styles.css` updated to add the Play button and the new game/bonus-prompt/attempt-summary screens to the existing screen router.
+
+Several values needed to actually run a level aren't specified anywhere in ARCHITECTURE.md (board size, starting lives, what makes a level succeed or fail, bonus-round move target and failure behavior) — each was resolved with an explicit, flagged default rather than left blocking. Full list and reasoning in DECISIONS.md's "Phase 4 core game client session" block. Two later-phase dependencies were stubbed rather than built early: the daily game-definition (seed + theme shuffle) is generated client-side pending Phase 6, and both ad-gated moments (ad-life on timeout, bonus-round entry) grant immediately with a visibly-labeled dev stub pending Phase 10's real AdMob integration. Neither stub touches the score-integrity rule — no score is submitted or persisted yet, since Phase 5 (the validating Edge Function) doesn't exist; the client-computed score is explicitly labeled as not server-validated everywhere it's shown.
+
+The originally-referenced "existing HTML/CSS/JS match-3 prototype" mentioned in ROADMAP.md's Phase 4 line was not found anywhere in the repo (confirmed via a full tarball listing) — nothing under `client/` predates this session except the Phase 3 auth/profile files. The match-3 engine was written fresh against the ARCHITECTURE.md Section 3 spec rather than ported from a file that doesn't exist in this repo. If a prototype exists outside the repo, it wasn't available to this session — flagging in case that was assumed carried over from context this repo doesn't retain.
+
+Bugs fixed: one, caught before delivery via a standalone Node sanity test rather than shipped and found later — `generateBoard()`'s no-pregen-match check compared against the in-progress row before that row had been appended to the board array, throwing on the third cell of the very first row. Fixed by appending each row to the board array immediately rather than building it in a separate local array first.
+
+Decisions made: see DECISIONS.md, 2026-09-12 "Phase 4 core game client session" block — board size/piece count, starting lives, level completion/failure rule, bonus-round move target and failure behavior, and the two dev-stub call-outs.
+
+**Next session start point:** manually test the full Phase 4 flow via GitHub Pages (no Capacitor wrapper needed, same as Phase 3 testing) — play a full 26-slot attempt, confirm the bonus prompt fires after slots C/F/I/L/O/R/U/X, confirm life-pool depletion ends the attempt cleanly, confirm the HUD (timer/moves/lives/score) stays accurate through cascades. Once confirmed, check off Phase 4 in ROADMAP.md and proceed to Phase 5 — Score integrity (the Edge Function that will make the score this session's client displays actually authoritative).
+
+---
+
 **2026-09-12 — Phase 3 confirmed working; cleanup**
 
 Built: nothing new — this closes out Phase 3. Confirmed the full auth flow end to end against the live Supabase project after the grants fix: email link → tap → session established → profile loads → home screen → profile screen (display name edit + change-email flow) all working. Two small cleanups: reverted the temporary diagnostic error message in `client/src/js/app.js` back to a plain user-facing one, and added `autocomplete="off"` to both name-entry inputs in `client/src/index.html` after mobile browser autofill dropped a full email address into the "Your name" field during testing (harmless, just meant fixing the display name by hand once).

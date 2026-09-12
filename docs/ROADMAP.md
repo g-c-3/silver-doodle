@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-09-12 (Phase 3 confirmed working).
+Last updated: 2026-09-12 (Phase 4 session — code delivered, not yet manually tested).
 
 - [x] **Phase 0 — Repo scaffold & docs.** Seed `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`, `docs/SESSIONS.md`; establish folder structure.
 - [ ] **Phase 1 — Infra & secrets (manual, one-time).** Mostly complete — see below.
@@ -14,7 +14,12 @@ Last updated: 2026-09-12 (Phase 3 confirmed working).
   - [ ] **Google Play Console account** (not blocking, but has long lead time). Not yet started.
 - [x] **Phase 2 — Database schema.** `supabase/migrations/20260912000000_phase2_schema.sql` run successfully against the live Supabase project via the SQL Editor. Covers `users`, `daily_game_definitions` + `daily_game_definition_slots`, `player_daily_order`, `attempts`, `daily_stats`, `weekly_stats`, `all_time_stats`, `user_year_activity`, plus RLS locking all writes to service-role only.
 - [x] **Phase 3 — Auth.** `client/src/` — email confirmation-link signup/login flow and a profile screen (display name editable directly, email change via a second confirmation link). Confirmed working end to end against the live Supabase project, including the Phase 2 grants fix.
-- [ ] **Phase 4 — Core game client.** Port the existing HTML/CSS/JS match-3 prototype into `client/src/`; implement the 26-slot theme system, fixed per-slot move targets, shared per-attempt life pool, forced-sequential play, and bonus-round trigger.
+- [ ] **Phase 4 — Core game client.** Code delivered this session — see below. Not yet manually tested.
+  - [x] **Match-3 engine.** `client/src/js/game-engine.js` — seeded RNG, 8x8 board generation (no pre-existing matches, guaranteed at least one legal move), match detection, scoring formula (incl. H+V combo doubling), gravity/refill cascade resolution. Pure logic, no DOM — sanity-tested standalone (determinism, scoring values, no-pregen-matches) before delivery.
+  - [x] **Attempt orchestration.** `client/src/js/attempt.js` — 26-slot forced-sequential play with fixed per-slot move targets, shared 3-life pool, one ad-earned life per level on timeout (dev-stubbed), bonus round every 3rd completed slot using a mix of the last 3 themes (dev-stubbed ad gate), tap-to-select-then-tap-adjacent-to-swap input, `{seed, moves[]}` payload assembly (logged to console only — not submitted anywhere yet).
+  - [x] **UI wiring.** `client/src/index.html`, `client/src/js/app.js`, `client/src/css/styles.css` updated — Play button on home, new game/bonus-prompt/attempt-summary screens registered with the existing screen router.
+  - [ ] **Manual test.** Not yet done — needs a real device/browser pass (playable via GitHub Pages, no Capacitor wrapper needed for this, same as Phase 3). Check: full 26-slot attempt completes; bonus prompt appears after slots C/F/I/.../X; life pool depletes and ends the attempt correctly; timer/moves HUD stays accurate; board never deals a dead/pre-matched opening state.
+  - [ ] **Known gaps, deliberately deferred, not oversights:** daily game-definition seed/theme-shuffle is client-generated pending Phase 6; ad-life and bonus-ad gates grant immediately with no real AdMob flow pending Phase 10; score is computed and shown client-side only, not submitted or persisted, pending Phase 5. See docs/DECISIONS.md's 2026-09-12 "Phase 4 core game client session" block.
 - [ ] **Phase 5 — Score integrity.** Edge Function that accepts `{seed, moves[]}`, deterministically replays a run, and returns the authoritative score/time-bonus/lives-used/levels-reached. Wired as a single call per completed attempt.
 - [ ] **Phase 6 — Daily game-definition generation.** Scheduled job producing the day's 12 game definitions (board pattern + theme shuffle per slot) and assigning each player's serving-order permutation.
 - [ ] **Phase 7 — Leaderboards.** 7-tier cascade queries for daily, weekly, and all-time scopes; per-player rank-breakdown data for the "how you got this rank" UI.

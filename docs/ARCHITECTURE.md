@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-12 (Phase 2 session).
+Last updated: 2026-09-12 (Phase 4 session).
 
 ## 1. Stack
 
@@ -27,6 +27,8 @@ docs/
   ARCHITECTURE.md
 client/
   src/                 game HTML/CSS/JS
+    js/game-engine.js  pure match-3 logic (seeded RNG, board, matches, scoring, cascades)
+    js/attempt.js      attempt orchestration (forced-sequential slots, lives, bonus trigger, rendering)
   android/             Capacitor Android project
   capacitor.config.json
 server/
@@ -116,6 +118,18 @@ One shared life pool per attempt, carried across the whole forced-sequential run
 ### 3.5 Bonus levels
 
 Offered as play-or-skip every 3rd completed level, using a mix of emojis from the previous 3 themes. Entry is gated behind a single rewarded-video ad (reduced from an earlier two-ad design).
+
+### 3.6 Client implementation values (Phase 4)
+
+These values are not derivable from Section 3.1's scoring/move-target spec alone and were fixed during Phase 4 — see docs/DECISIONS.md's 2026-09-12 "Phase 4 core game client session" block for the reasoning behind each:
+
+- **Board size:** 8x8. **Piece types per board:** 6 (matches the 6-emoji-per-theme design).
+- **Starting lives (shared per-attempt pool):** 3.
+- **Level completion:** a level is completed when its move budget is fully used (every valid swap counts down the budget, regardless of the matches it produces). A level fails if the 60-second timer expires before the move budget is exhausted.
+- **On level failure:** the player is offered the one ad-earned life for that level, or a life from the shared pool. Exhausting the shared pool ends the attempt at its current `levels_reached`, with status `completed`.
+- **Bonus rounds:** move target 20, same 60-second timer, no life-loss risk on timeout (whatever score was made stands, attempt continues). Bonus levels count toward `levels_reached`.
+
+Implemented in `client/src/js/game-engine.js` (pure match/cascade/scoring logic) and `client/src/js/attempt.js` (state machine, rendering, input). Both files currently stub two later-phase dependencies rather than blocking on them: the daily game-definition seed/theme-shuffle is generated client-side pending Phase 6, and the ad-life/bonus-ad gates grant immediately with no real AdMob flow pending Phase 10. Score submission to the Phase 5 Edge Function is not wired — the client computes and displays a score locally, explicitly labeled as not server-validated.
 
 ## 4. Daily Game Generation & Fairness Model
 
