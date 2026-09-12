@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-11 (seed).
+Last updated: 2026-09-12 (Phase 2 session).
 
 ## 1. Stack
 
@@ -31,6 +31,8 @@ client/
   capacitor.config.json
 server/
   functions/           Supabase Edge Functions (score replay validation, daily game-definition generation, leaderboard settlement)
+supabase/
+  migrations/           Postgres schema migrations (SQL Editor, run manually — Phase 2 onward)
 .github/workflows/
   build-apk.yml
   deploy-functions.yml
@@ -129,14 +131,17 @@ Ad-life grants and bonus-round entries are verified server-side via AdMob SSV ca
 
 ## 6. Data Model (Postgres, Supabase)
 
-Indicative table list — exact columns/migrations are written in Phase 2 of ROADMAP.md:
+Implemented in `supabase/migrations/20260912000000_phase2_schema.sql` (Phase 2, 2026-09-12). Refined from the original indicative list — see DECISIONS.md's Phase 2 block for the reasoning behind each deviation:
 
-- `users` — id, email, display_name, created_at, updated_at
-- `daily_game_definitions` — date, slot_index (0–25), board_pattern, theme_id, move_target (12 rows/day, one per game definition, each holding its own 26-slot theme shuffle)
-- `player_daily_order` — user_id, date, game_definition_order (permutation of 12 indices)
-- `attempts` — id, user_id, game_definition_id, started_at, completed_at, score_day (the calendar day this attempt is scored against — see Section 9), status (completed/forfeited), score, time_bonus, lives_used, levels_reached
-- `daily_stats`, `weekly_stats`, `all_time_stats` — per-user rolling aggregates (max score, sum score/count for average, max/avg time bonus, avg lives used, attempts played, avg levels played), updated transactionally on each attempt completion, feeding the leaderboard cascade without live re-scans
-- `user_year_activity` — user_id, year, per-date attempts_count — a lightweight index for the calendar view, avoiding a full-month scan of `attempts` on every calendar render
+- `users` — id (references `auth.users`), email, display_name, created_at, updated_at. Kept in sync with `auth.users` via trigger; only `display_name` is client-editable. A `leaderboard_profiles` view exposes id + display_name (never email) for public leaderboard display.
+- `daily_game_definitions` — id, game_date, game_index (0–11), created_at (12 rows/day, one per game definition)
+- `daily_game_definition_slots` — id, game_definition_id (FK), slot_index (0–25), theme_id, board_pattern (26 child rows per definition; move_target is a fixed constant per slot_index, not stored)
+- `player_daily_order` — user_id, game_date, game_order (validated 0–11 permutation), assigned_at
+- `attempts` — id, user_id, game_definition_id, started_at, completed_at, score_day (the calendar day this attempt is scored against — see Section 9), status (in_progress/completed/forfeited), score, time_bonus_micros, lives_used, levels_reached. Summary-only — raw `{seed, moves[]}` replay payloads are never persisted.
+- `daily_stats`, `weekly_stats`, `all_time_stats` — per-user rolling aggregates: max_score, sum_score, max/sum_time_bonus_micros, sum_lives_used, sum_levels_played, attempts_started, attempts_completed. The average-based cascade tiers (Section 7, tiers 2/4/5/7) divide by attempts_completed; the attempt-count tier (tier 6) uses attempts_started. Updated transactionally on each attempt completion.
+- `user_year_activity` — user_id, activity_date, attempts_count — a lightweight index for the calendar view, avoiding a full-month scan of `attempts` on every calendar render
+
+All tables have RLS enabled. Players can read their own private rows and the public aggregate/reference tables; no table accepts client-side writes except `users.display_name` — attempt lifecycle, stats aggregation, and game-definition/order generation are all service-role-only operations performed by Edge Functions in later phases. This makes the score-integrity rule (Section 5) a database-level guarantee, not just an application-level convention.
 
 ## 7. Leaderboard Cascade
 
