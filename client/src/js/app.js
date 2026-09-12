@@ -12,6 +12,9 @@ const screens = [
   'screen-check-email',
   'screen-name-setup',
   'screen-home',
+  'screen-game',
+  'screen-bonus-prompt',
+  'screen-attempt-summary',
   'screen-profile',
   'screen-email-change',
   'screen-check-email-change',
@@ -137,6 +140,24 @@ document.getElementById('name-setup-skip-btn').addEventListener('click', () => {
 document.getElementById('home-profile-btn').addEventListener('click', () => {
   renderProfileScreen();
   showScreen('screen-profile');
+});
+
+document.getElementById('home-play-btn').addEventListener('click', () => {
+  Attempt.startAttempt();
+});
+
+// ---- Game / bonus / summary ----
+
+document.getElementById('bonus-play-btn').addEventListener('click', () => {
+  Attempt.acceptBonus();
+});
+
+document.getElementById('bonus-skip-btn').addEventListener('click', () => {
+  Attempt.skipBonus();
+});
+
+document.getElementById('summary-home-btn').addEventListener('click', () => {
+  showScreen('screen-home');
 });
 
 // ---- Profile ----
