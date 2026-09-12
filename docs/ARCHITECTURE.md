@@ -121,13 +121,16 @@ Offered as play-or-skip every 3rd completed level, using a mix of emojis from th
 
 ### 3.6 Client implementation values (Phase 4)
 
-These values are not derivable from Section 3.1's scoring/move-target spec alone and were fixed during Phase 4 — see docs/DECISIONS.md's 2026-09-12 "Phase 4 core game client session" block for the reasoning behind each:
+These values are not derivable from Section 3.1's scoring/move-target spec alone. Fixed during Phase 4, corrected mid-session after an uploaded playable prototype (`daily-match-playable-demo.html`, a 4-level proof-of-concept of the full 26-slot design) clarified several mechanics an earlier pass had guessed at incorrectly — see docs/DECISIONS.md's 2026-09-12 "Phase 4 rebuild against the uploaded prototype" block for the full reasoning and what changed:
 
 - **Board size:** 8x8. **Piece types per board:** 6 (matches the 6-emoji-per-theme design).
-- **Starting lives (shared per-attempt pool):** 3.
-- **Level completion:** a level is completed when its move budget is fully used (every valid swap counts down the budget, regardless of the matches it produces). A level fails if the 60-second timer expires before the move budget is exhausted.
-- **On level failure:** the player is offered the one ad-earned life for that level, or a life from the shared pool. Exhausting the shared pool ends the attempt at its current `levels_reached`, with status `completed`.
-- **Bonus rounds:** move target 20, same 60-second timer, no life-loss risk on timeout (whatever score was made stands, attempt continues). Bonus levels count toward `levels_reached`.
+- **Starting lives (shared per-attempt pool):** 3, consumed automatically and in order on timeout — no player choice while any remain.
+- **A life does not regenerate the board.** Using a life (regular or the one ad-earned life) adds 60 seconds to the current level's clock and continues on the same board with moves/score progress intact.
+- **Level completion:** a level is completed when its move budget is fully used (every valid swap counts down the budget, regardless of the matches it produces).
+- **On level failure:** once all 3 regular lives are already spent, the player is offered the single ad-earned life for that level (once per level) before the level — and the whole attempt — fails. Failing ends the attempt immediately, at its current `levels_reached`, with status `completed`. The failed level contributes 0 to both score and time bonus (Section 3.3) — its in-progress score is held in a scratch total that is only committed to the attempt's running total on that level's successful completion, never on failure.
+- **Mandatory theme reveal.** Every level, bonus or not, is preceded by a reveal screen showing its theme name, its 6 (or, for a bonus round, 6 mixed) piece emoji, and its requirements, before the timer starts. Only the bonus-round reveal has a Skip.
+- **Bonus rounds:** a flat 30-second timer, no move cap at all, and no life risk — the timer simply ends the round and whatever was scored stands. Bonus levels count toward `levels_reached` but their score is never subject to the "incomplete = 0" rule regular slots use. The piece mix is deterministic: 2 emoji drawn from each of the 3 most recently completed slot themes.
+- **Ad count:** both the ad-life grant and the bonus-round entry gate are single-ad, per the existing 2026-09-11 "Ad cadence" decision — the uploaded prototype simulates 2 ads per gate, but is judged to predate that decision rather than supersede it.
 
 Implemented in `client/src/js/game-engine.js` (pure match/cascade/scoring logic) and `client/src/js/attempt.js` (state machine, rendering, input). Both files currently stub two later-phase dependencies rather than blocking on them: the daily game-definition seed/theme-shuffle is generated client-side pending Phase 6, and the ad-life/bonus-ad gates grant immediately with no real AdMob flow pending Phase 10. Score submission to the Phase 5 Edge Function is not wired — the client computes and displays a score locally, explicitly labeled as not server-validated.
 
