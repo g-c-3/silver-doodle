@@ -1,1 +1,1 @@
-
+Supabase Edge Functions are populated starting Phase 5 of `../../docs/ROADMAP.md` (score-integrity replay validation) and Phase 6 (daily game-definition generation). See `../../docs/ARCHITECTURE.md` Sections 4–5.
