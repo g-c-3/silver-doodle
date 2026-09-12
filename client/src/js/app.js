@@ -65,7 +65,10 @@ async function routeAfterAuth(session) {
   scrubAuthParamsFromUrl();
   const { data: profile, error } = await Profile.fetch(session.user.id);
   if (error) {
-    setError('email-error', 'Could not load your profile. Try again.');
+    // TEMPORARY diagnostic — shows the real Postgrest/RLS error instead of a
+    // generic message, to track down the Phase 3 profile-load issue. Revert
+    // to a plain user-facing message once resolved.
+    setError('email-error', `Could not load your profile: ${error.message || error.code || JSON.stringify(error)}`);
     showScreen('screen-email');
     return;
   }
