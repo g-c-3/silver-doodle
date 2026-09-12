@@ -1,0 +1,179 @@
+# Architecture
+
+Last updated: 2026-09-11 (seed).
+
+## 1. Stack
+
+| Concern | Choice |
+|---|---|
+| Client | HTML/CSS/JavaScript match-3 game, wrapped as a native Android app via Capacitor |
+| Backend | Supabase — Postgres (data + leaderboards), Auth (email OTP), Edge Functions (TypeScript, score-replay validation) |
+| Analytics / crash reporting | Firebase — Analytics (linked to AdMob for revenue-by-cohort reporting) + Crashlytics only. No Firestore, no Firebase Auth — kept deliberately separate from the Supabase-owned auth/database/functions layer |
+| Ads | Google AdMob via `@capacitor-community/admob` — rewarded (primary trigger for ad-life and bonus-round entry), interstitial (capped), banner (optional) |
+| CI/CD | GitHub Actions — `build-apk.yml` (Capacitor + Gradle, produces an APK artifact/release), `deploy-functions.yml` (deploys Supabase Edge Functions on push to `server/functions/`) |
+| Distribution | Manual APK sideload via GitHub Releases during development; Google Play is a later phase |
+
+Capacitor was chosen over Unity or Godot specifically because scene/layout work in those engines is authored visually in a GUI editor, which cannot be previewed without running the editor. Plain HTML/CSS/JS can be authored and reasoned about correctly as text. The existing playable browser prototype's match/cascade/scoring logic is reused directly as the app core rather than rewritten.
+
+Supabase was chosen over Firebase primarily because the leaderboard ranking model (Section 8) is a multi-column `ORDER BY` in Postgres, versus hand-rolled denormalized aggregate fields in Firestore.
+
+## 2. Repo Layout
+
+```
+docs/
+  ROADMAP.md
+  DECISIONS.md
+  SESSIONS.md
+  ARCHITECTURE.md
+client/
+  src/                 game HTML/CSS/JS
+  android/             Capacitor Android project
+  capacitor.config.json
+server/
+  functions/           Supabase Edge Functions (score replay validation, daily game-definition generation, leaderboard settlement)
+.github/workflows/
+  build-apk.yml
+  deploy-functions.yml
+privacy-policy.html     served via GitHub Pages, required before Google Play submission
+```
+
+## 3. Game Mechanics Reference
+
+### 3.1 Levels, slots, and move targets
+
+26 themes, each with a fixed set of 6 native Unicode emoji, unique across all 26 sets (no glyph repeats anywhere in the game, so bonus-round mixing across any 3 themes never produces a duplicate-looking piece):
+
+| # | Theme | Piece set |
+|---|---|---|
+| 1 | Pets | 🐶🐱🐹🐰🐭🦔 |
+| 2 | Farm Animals | 🐮🐷🐔🐴🐑🐐 |
+| 3 | Wild Animals | 🦁🐯🐻🐼🐨🐘 |
+| 4 | Faces & Emotions | 😀😂😍😎🤩🥳 |
+| 5 | Birds | 🐦🦅🦉🦜🐧🦢 |
+| 6 | Sea Creatures | 🐟🐠🐡🦈🐬🐳 |
+| 7 | Ocean & Reef | 🦀🐙🦑🪼🐚🦞 |
+| 8 | Reptiles & Amphibians | 🐊🐍🐢🦎🐸🦖 |
+| 9 | Insects & Bugs | 🐝🐞🐛🕷️🦗🪰 |
+| 10 | Fantasy Creatures | 🐉🦄🧜🧚🧞🧌 |
+| 11 | Fruits | 🍎🍊🍌🍇🍓🍉 |
+| 12 | Tropical Fruits | 🍍🥭🥝🍒🍑🍋 |
+| 13 | Vegetables | 🥕🥦🍆🌽🥔🍅 |
+| 14 | Desserts & Sweets | 🍰🍩🍭🍫🧁🍪 |
+| 15 | Fast Food & Snacks | 🍕🍔🍟🌭🍿🥨 |
+| 16 | Drinks & Beverages | ☕🧋🥤🥛🧃🍵 |
+| 17 | Musical Instruments | 🎸🎹🥁🎺🎷🎻 |
+| 18 | Sports Equipment | ⚽🏀🏈⚾🎾🏐 |
+| 19 | Land Vehicles | 🚗🚌🚚🚜🏍️🚲 |
+| 20 | Air & Sea Vehicles | ✈️🚁🚀🚢⛵🛸 |
+| 21 | Weather & Sky | ☀️🌧️⛈️❄️🌈🌪️ |
+| 22 | Space & Celestial | 🪐🌍🌙⭐☄️🛰️ |
+| 23 | Tools & Hardware | 🔨🔧🪛🪚🔩⚙️ |
+| 24 | Electronics & Gadgets | 🤖💻📱⌚🕹️🔋 |
+| 25 | Card & Game Pieces | 🎲♟️🃏🎳🎯🎰 |
+| 26 | Seasonal & Holiday | 🎄🎃🎆🎁🥚🧧 |
+
+A level's **slot** (A–Z) is a fixed position in the 26-level sequence and carries a fixed move target, regardless of which theme is shuffled into it for a given game:
+
+| Slot | Moves | Slot | Moves | Slot | Moves | Slot | Moves |
+|---|---|---|---|---|---|---|---|
+| A | 9 | H | 30 | O | 56 | V | 86 |
+| B | 12 | I | 33 | P | 60 | W | 91 |
+| C | 15 | J | 36 | Q | 64 | X | 96 |
+| D | 18 | K | 40 | R | 68 | Y | 101 |
+| E | 21 | L | 44 | S | 72 | Z | 107 |
+| F | 24 | M | 48 | T | 76 | | |
+| G | 27 | N | 52 | U | 81 | | |
+
+Each level runs a fixed 60-second timer. An unsuccessful swap attempt does not consume a move. Board size, piece-type count, and absence of blockers/obstacles stay flat across all 26 levels — only the move target scales.
+
+Play is forced-sequential within an attempt (no free level selection): a player always plays slot A, then B, then C, in order, through Z. What varies per game is which of the 26 themes has been shuffled into each slot (Section 4).
+
+Piece art for every theme is native Unicode emoji glyphs only — no custom-drawn or licensed art assets, no art-production pipeline or asset bundle to ship. The finalized 26-theme list and piece sets are given above; the original theme list's thin categories (Dinosaurs, Butterflies & moths, Gemstones & crystals, generic "emojis") were replaced or merged during that redefinition specifically to guarantee 6 available native emoji per theme with zero glyph repeats across the full set.
+
+### 3.2 Scoring formula
+
+Each tile is worth 10 points. A match of `n` tiles (n = 3–6) scores `10n × (1 + n/10)`:
+
+- match-3 = 39
+- match-4 = 56
+- match-5 = 75
+- match-6 = 96
+
+A simultaneous horizontal+vertical combo sums each line's own score using the same formula (the shared intersection tile counted once per line), then doubles the total.
+
+No power-ups, bombs, or special tiles exist at any match size — every match produces points only.
+
+### 3.3 Time Bonus
+
+Leftover time is captured per completed level as `sec:milli:micro` and accumulated digit-clock-style across every completed level in the attempt (1,000 microseconds → +1 millisecond, 1,000 milliseconds → +1 second, 60 seconds → +1 minute). The result is a raw duration, not a points figure. An incomplete level contributes 0 to both Score and Time Bonus.
+
+### 3.4 Lives
+
+One shared life pool per attempt, carried across the whole forced-sequential run (not per level, not per free-order session — free level selection was considered and reversed; see DECISIONS.md). One ad-earned life is available per level, gated behind a single rewarded-video ad (reduced from an earlier two-ad design).
+
+### 3.5 Bonus levels
+
+Offered as play-or-skip every 3rd completed level, using a mix of emojis from the previous 3 themes. Entry is gated behind a single rewarded-video ad (reduced from an earlier two-ad design).
+
+## 4. Daily Game Generation & Fairness Model
+
+Once per day, the server generates **12 fixed game definitions**, each pairing a board tile-pattern with an independent theme-to-slot shuffle (which of the 26 themes sits at A, which at B, … through Z — move target stays fixed per slot regardless of theme). All 12 game definitions are identical for every player that day.
+
+What is individually randomized per player is the **order** the 12 games are served in — each player gets their own permutation of the 12 game-definition indices, assigned at their first attempt of the day. This prevents scouting another player's upcoming game while guaranteeing everyone plays the same 12 challenges by day's end.
+
+## 5. Score Integrity Model
+
+The client never sends a raw score. Each attempt submits one batched payload — `{seed, moves[]}` — to a single Supabase Edge Function call at attempt completion. The function deterministically replays the run server-side (board seed, matches, cascades, time remaining) and computes the authoritative score, time bonus, lives used, and levels reached. This is a single call per attempt (not per level), which is both the anti-cheat model and the basis of the Supabase cost model in DECISIONS.md — roughly 12 Edge Function calls per player per day at 12 attempts/day, rather than ~96 under a per-level-call design.
+
+Ad-life grants and bonus-round entries are verified server-side via AdMob SSV callbacks, never trusted from a client-reported "ad watched" flag.
+
+## 6. Data Model (Postgres, Supabase)
+
+Indicative table list — exact columns/migrations are written in Phase 2 of ROADMAP.md:
+
+- `users` — id, email, display_name, created_at, updated_at
+- `daily_game_definitions` — date, slot_index (0–25), board_pattern, theme_id, move_target (12 rows/day, one per game definition, each holding its own 26-slot theme shuffle)
+- `player_daily_order` — user_id, date, game_definition_order (permutation of 12 indices)
+- `attempts` — id, user_id, game_definition_id, started_at, completed_at, score_day (the calendar day this attempt is scored against — see Section 9), status (completed/forfeited), score, time_bonus, lives_used, levels_reached
+- `daily_stats`, `weekly_stats`, `all_time_stats` — per-user rolling aggregates (max score, sum score/count for average, max/avg time bonus, avg lives used, attempts played, avg levels played), updated transactionally on each attempt completion, feeding the leaderboard cascade without live re-scans
+- `user_year_activity` — user_id, year, per-date attempts_count — a lightweight index for the calendar view, avoiding a full-month scan of `attempts` on every calendar render
+
+## 7. Leaderboard Cascade
+
+Applied identically across all three scopes — daily, weekly (resets Monday 00:00 IST), all-time (never resets) — over each scope's respective attempt pool:
+
+1. Highest single-attempt Score (descending).
+2. Average Score across attempts actually played in the period (descending) — unplayed attempts excluded from the average, not counted as zero.
+3. Highest single-attempt Time Bonus (descending).
+4. Average Time Bonus across attempts actually played (descending).
+5. Average lives used per attempt, including any ad-earned life (ascending — fewer used ranks higher).
+6. Number of attempts played in the period (ascending — fewer attempts to reach the same result ranks higher).
+7. Average levels played per attempt, including bonus levels (ascending — fewer needed ranks higher).
+
+Each tier is only consulted if every player above it is exactly tied on all prior tiers. The per-player rank-breakdown UI shows which tier decided the player's placement.
+
+## 8. Attempt Accounting Rules
+
+Slot-cap enforcement and score attribution are deliberately decoupled, each keyed to a different timestamp:
+
+- **Slot cap (12/day) uses the attempt's start timestamp.** Checked and decremented server-side when a run begins.
+- **Leaderboard placement uses the attempt's completion timestamp.** An attempt that starts before midnight and finishes after is scored against the day it finished, keeping each day's leaderboard closeable and immutable once its settlement job runs — no reconciliation of an already-closed day is ever needed.
+
+Net effect: a player can occasionally have an attempt's score land on the following day without it costing that day a slot — bounded to at most one such attempt per player per day boundary.
+
+An attempt is marked **forfeited** if the app is closed or force-terminated while a game is live, detected server-side via a heartbeat/timeout check — never a client-reported flag. Attempt history shows, per attempt: start time, status (score achieved / forfeited), and which day it was scored against.
+
+## 9. All-Time Stats & Calendar
+
+Per-player all-time stats (days played, total attempts, best day, least day) and a month/year calendar (dot-marked played days) drilling into per-day attempt/score detail. Best/least day use the same metric as leaderboard tier 1 (highest single-attempt score that day), to keep one consistent definition of "performance" across leaderboard, all-time stats, and calendar. The calendar reads the lightweight `user_year_activity` index per year rather than scanning `attempts` per visible month.
+
+## 10. Auth
+
+Email + OTP only, via Supabase Auth — no phone verification. Only name and email are collected at signup; no other personal data. Name and email are editable later; an email change requires OTP re-verification. No minimum age gate (see DECISIONS.md for the associated open DPDP risk note).
+
+## 11. CI/CD
+
+- `build-apk.yml` — Capacitor + Gradle build, produces an APK artifact and/or GitHub Release. Requires an Android signing keystore stored as a repo secret (not yet configured — Phase 1 of ROADMAP.md).
+- `deploy-functions.yml` — deploys Supabase Edge Functions on push to `server/functions/`. Requires a Supabase access token and project ref stored as repo secrets (not yet configured — Phase 1 of ROADMAP.md).
+
+GitHub Actions handles all building; no local terminal build steps are ever required.
