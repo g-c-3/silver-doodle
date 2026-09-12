@@ -53,7 +53,7 @@
       <h1>Welcome!</h1>
       <p class="muted">Pick a display name — this is what other players see on the leaderboard.</p>
       <form id="name-setup-form" class="stack">
-        <input id="name-setup-input" type="text" maxlength="24" placeholder="Your name" required />
+        <input id="name-setup-input" type="text" maxlength="24" placeholder="Your name" autocomplete="off" required />
         <button id="name-setup-submit-btn" type="submit" class="primary">Save</button>
       </form>
       <p id="name-setup-error" class="error hidden"></p>
@@ -78,7 +78,7 @@
 
       <form id="profile-name-form" class="stack">
         <label class="field-label" for="profile-name-input">Display name</label>
-        <input id="profile-name-input" type="text" maxlength="24" required />
+        <input id="profile-name-input" type="text" maxlength="24" autocomplete="off" required />
         <button id="profile-name-submit-btn" type="submit" class="primary">Save name</button>
       </form>
       <p id="profile-name-error" class="error hidden"></p>
