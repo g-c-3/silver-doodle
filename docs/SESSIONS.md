@@ -4,6 +4,18 @@ Most recent entry first.
 
 ---
 
+**2026-09-12 — Phase 3 confirmed working; cleanup**
+
+Built: nothing new — this closes out Phase 3. Confirmed the full auth flow end to end against the live Supabase project after the grants fix: email link → tap → session established → profile loads → home screen → profile screen (display name edit + change-email flow) all working. Two small cleanups: reverted the temporary diagnostic error message in `client/src/js/app.js` back to a plain user-facing one, and added `autocomplete="off"` to both name-entry inputs in `client/src/index.html` after mobile browser autofill dropped a full email address into the "Your name" field during testing (harmless, just meant fixing the display name by hand once).
+
+Bugs fixed: none this entry (see the previous "Phase 2 fix" entry for the actual bug).
+
+Decisions made: none new.
+
+**Next session start point:** Phase 3 is complete and confirmed. Proceed to Phase 4 — Core game client (port the existing HTML/CSS/JS match-3 prototype into `client/src/`, replacing the `#screen-home` placeholder with the actual daily puzzle).
+
+---
+
 **2026-09-12 — Phase 2 fix (missing grants + linter hardening)**
 
 Built: `supabase/migrations/20260912010000_phase2_fix_grants_and_hardening.sql`.
