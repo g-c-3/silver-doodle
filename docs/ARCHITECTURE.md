@@ -174,7 +174,7 @@ Per-player all-time stats (days played, total attempts, best day, least day) and
 
 ## 10. Auth
 
-Email + OTP only, via Supabase Auth — no phone verification. Only name and email are collected at signup; no other personal data. Name and email are editable later; an email change requires OTP re-verification. No minimum age gate (see DECISIONS.md for the associated open DPDP risk note).
+Email + OTP only, via Supabase Auth — no phone verification. Implemented as a tap-the-link confirmation email rather than a typed 6-digit code (see DECISIONS.md Phase 3 "link-flow pivot" block for why) — the link itself is the one-time-use token. Only name and email are collected at signup; no other personal data. Name and email are editable later; an email change requires tapping a confirmation link sent to the new address. No minimum age gate (see DECISIONS.md for the associated open DPDP risk note).
 
 ## 11. CI/CD
 
