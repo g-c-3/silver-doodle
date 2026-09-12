@@ -25,26 +25,23 @@
       <form id="email-form" class="stack">
         <input id="email-input" type="email" inputmode="email" autocomplete="email"
                placeholder="you@example.com" required />
-        <button id="email-submit-btn" type="submit" class="primary">Send code</button>
+        <button id="email-submit-btn" type="submit" class="primary">Send link</button>
       </form>
       <p id="email-error" class="error hidden"></p>
     </div>
   </section>
 
-  <!-- OTP entry -->
-  <section id="screen-otp" class="screen hidden">
+  <!-- Waiting for the confirmation link to be tapped -->
+  <section id="screen-check-email" class="screen hidden">
     <div class="center-column">
-      <h1>Enter your code</h1>
-      <p class="muted">We sent a 6-digit code to <span id="otp-email-label" class="highlight"></span></p>
-      <form id="otp-form" class="stack">
-        <input id="otp-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
-               autocomplete="one-time-code" placeholder="123456" required />
-        <button id="otp-submit-btn" type="submit" class="primary">Verify</button>
-      </form>
-      <p id="otp-error" class="error hidden"></p>
+      <div class="logo">📩</div>
+      <h1>Check your email</h1>
+      <p class="muted">We sent a confirmation link to <span id="check-email-label" class="highlight"></span>.
+      Tap it to continue — you can come back to this tab afterward.</p>
+      <p id="check-email-error" class="error hidden"></p>
       <div class="row">
-        <button id="otp-back-btn" type="button" class="link">Use a different email</button>
-        <button id="otp-resend-btn" type="button" class="link">Resend code</button>
+        <button id="check-email-back-btn" type="button" class="link">Use a different email</button>
+        <button id="check-email-resend-btn" type="button" class="link">Resend link</button>
       </div>
     </div>
   </section>
@@ -102,28 +99,24 @@
   <section id="screen-email-change" class="screen hidden">
     <div class="center-column">
       <h1>Change email</h1>
-      <p class="muted">Enter your new email address. We'll send a code to confirm it.</p>
+      <p class="muted">Enter your new email address. We'll send a confirmation link to it.</p>
       <form id="email-change-form" class="stack">
         <input id="new-email-input" type="email" inputmode="email" placeholder="new@example.com" required />
-        <button id="email-change-submit-btn" type="submit" class="primary">Send code</button>
+        <button id="email-change-submit-btn" type="submit" class="primary">Send link</button>
       </form>
       <p id="email-change-error" class="error hidden"></p>
       <button id="email-change-back-btn" type="button" class="link">Cancel</button>
     </div>
   </section>
 
-  <!-- Email change: confirm code -->
-  <section id="screen-email-change-otp" class="screen hidden">
+  <!-- Email change: waiting for the confirmation link to be tapped -->
+  <section id="screen-check-email-change" class="screen hidden">
     <div class="center-column">
-      <h1>Confirm new email</h1>
-      <p class="muted">Enter the code sent to <span id="email-change-otp-label" class="highlight"></span></p>
-      <form id="email-change-otp-form" class="stack">
-        <input id="email-change-otp-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
-               placeholder="123456" required />
-        <button id="email-change-otp-submit-btn" type="submit" class="primary">Confirm</button>
-      </form>
-      <p id="email-change-otp-error" class="error hidden"></p>
-      <button id="email-change-otp-back-btn" type="button" class="link">Back</button>
+      <div class="logo">📩</div>
+      <h1>Check your new inbox</h1>
+      <p class="muted">We sent a confirmation link to <span id="check-email-change-label" class="highlight"></span>.
+      Tap it, then come back here — your profile will update automatically.</p>
+      <button id="check-email-change-back-btn" type="button" class="link">Back to profile</button>
     </div>
   </section>
 
