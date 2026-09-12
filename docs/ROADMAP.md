@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-09-12 (Phase 2 session).
+Last updated: 2026-09-12 (Phase 3 session).
 
 - [x] **Phase 0 — Repo scaffold & docs.** Seed `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`, `docs/SESSIONS.md`; establish folder structure.
 - [ ] **Phase 1 — Infra & secrets (manual, one-time).** Mostly complete — see below.
@@ -13,7 +13,7 @@ Last updated: 2026-09-12 (Phase 2 session).
   - [ ] **Branding assets.** Placeholder app icon / adaptive icon and splash screen — not yet generated. No account dependency; can be done anytime.
   - [ ] **Google Play Console account** (not blocking, but has long lead time). Not yet started.
 - [x] **Phase 2 — Database schema.** `supabase/migrations/20260912000000_phase2_schema.sql` run successfully against the live Supabase project via the SQL Editor. Covers `users`, `daily_game_definitions` + `daily_game_definition_slots`, `player_daily_order`, `attempts`, `daily_stats`, `weekly_stats`, `all_time_stats`, `user_year_activity`, plus RLS locking all writes to service-role only.
-- [ ] **Phase 3 — Auth.** Email OTP signup/login flow; profile screen for changing name and email (email change re-verified via OTP).
+- [ ] **Phase 3 — Auth.** `client/src/` scaffolded with a plain HTML/CSS/JS email-OTP signup/login flow and a profile screen (display name editable directly, email change via a second OTP confirmation). Not yet checked off — pending the anon key placeholder in `client/src/js/config.js` being filled in and the flow being manually tested against the live Supabase project (no Capacitor wrapper yet to test on-device; can be opened as a plain page in a mobile browser for now).
 - [ ] **Phase 4 — Core game client.** Port the existing HTML/CSS/JS match-3 prototype into `client/src/`; implement the 26-slot theme system, fixed per-slot move targets, shared per-attempt life pool, forced-sequential play, and bonus-round trigger.
 - [ ] **Phase 5 — Score integrity.** Edge Function that accepts `{seed, moves[]}`, deterministically replays a run, and returns the authoritative score/time-bonus/lives-used/levels-reached. Wired as a single call per completed attempt.
 - [ ] **Phase 6 — Daily game-definition generation.** Scheduled job producing the day's 12 game definitions (board pattern + theme shuffle per slot) and assigning each player's serving-order permutation.
