@@ -12,6 +12,7 @@ const screens = [
   'screen-check-email',
   'screen-name-setup',
   'screen-home',
+  'screen-level-reveal',
   'screen-game',
   'screen-bonus-prompt',
   'screen-attempt-summary',
@@ -147,6 +148,14 @@ document.getElementById('home-play-btn').addEventListener('click', () => {
 });
 
 // ---- Game / bonus / summary ----
+
+document.getElementById('reveal-start-btn').addEventListener('click', () => {
+  Attempt.confirmReveal();
+});
+
+document.getElementById('reveal-skip-btn').addEventListener('click', () => {
+  Attempt.skipBonusFromReveal();
+});
 
 document.getElementById('bonus-play-btn').addEventListener('click', () => {
   Attempt.acceptBonus();

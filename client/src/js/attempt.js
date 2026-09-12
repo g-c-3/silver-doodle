@@ -1,21 +1,41 @@
 // Match Emojis Daily — attempt orchestration (Phase 4: core game client)
 //
-// KNOWN GAP, not a bug: docs/ARCHITECTURE.md Section 4 describes the daily
-// game definitions (12/day, identical for every player, server-generated) as
-// a Phase 6 deliverable. Phase 6 doesn't exist yet, so this file generates
-// its own attempt seed and theme shuffle client-side purely so the game is
-// playable/testable now. Swap `startAttempt()`'s seed/theme-shuffle source
-// for the real daily definition + player order once Phase 6 lands — the rest
-// of the state machine (forced-sequential slots, lives, bonus trigger,
-// scoring) does not need to change.
+// Ported from an uploaded playable spec demo (daily-match-playable-demo.html,
+// a 4-level proof-of-concept of the full 26-slot design) after an earlier
+// version of this file was written from ARCHITECTURE.md's spec text alone —
+// the ARCHITECTURE.md text alone did not have (and the demo clarified):
+//   - losing a life extends the SAME level's timer by 60s and continues on
+//     the same board/moves progress — it does NOT regenerate the board.
+//   - the 3 regular lives are consumed automatically, in order, before the
+//     one ad-earned life is ever offered.
+//   - running out of every life (3 regular + the ad-life) ends the WHOLE
+//     ATTEMPT immediately, not just the current level.
+//   - every level (bonus or not) is preceded by a mandatory theme-reveal
+//     screen; only the bonus reveal has a Skip.
+//   - bonus rounds run a flat 30s clock with no move cap and no life risk,
+//     using 2 emoji drawn from each of the 3 most recently completed themes.
+// See docs/DECISIONS.md's 2026-09-12 "Phase 4 rebuild against the uploaded
+// prototype" block for the full reconciliation, including the one place
+// this file deliberately does NOT copy the prototype: the demo's own
+// on-timeout copy claims an incomplete level "banks zero score," but its
+// code never rolls back the score already earned from matches made mid-
+// level. ARCHITECTURE.md Section 3.3 is explicit ("An incomplete level
+// contributes 0 to both Score and Time Bonus") and is treated as the
+// correct spec here — this file holds a level's score in a scratch total
+// and only commits it to the attempt total on successful completion.
 //
 // KNOWN GAP: score submission to the Phase 5 Edge Function is not wired yet
 // (Phase 5 doesn't exist). The {seed, moves[]} payload is assembled and
 // logged to the console / shown in the summary screen, but nothing is sent
 // over the network and nothing is persisted. The score shown to the player
-// right now is client-computed and NOT authoritative — this is explicitly
-// flagged in the summary screen copy so it's never confused with a real,
-// server-validated result.
+// right now is client-computed and NOT authoritative.
+//
+// KNOWN GAP: docs/ARCHITECTURE.md Section 4 describes the daily game
+// definitions (12/day, identical for every player, server-generated) as a
+// Phase 6 deliverable. Phase 6 doesn't exist yet, so this file generates its
+// own attempt seed and theme shuffle client-side purely so the game is
+// playable/testable now. Swap `startAttempt()`'s seed/theme-shuffle source
+// for the real daily definition + player order once Phase 6 lands.
 
 const Attempt = (() => {
   const SLOT_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
@@ -58,11 +78,10 @@ const Attempt = (() => {
     { name: 'Seasonal & Holiday', emojis: ['🎄', '🎃', '🎆', '🎁', '🥚', '🧧'] },
   ];
 
-  // New decision (Phase 4, not previously specified): starting lives for the
-  // shared per-attempt pool. Flagged in docs/DECISIONS.md for confirmation.
-  const STARTING_LIVES = 3;
-  const TIME_LIMIT_MS = 60000;
-  const BONUS_MOVE_TARGET = 20;
+  const STARTING_LIVES = 3; // confirmed by the uploaded prototype
+  const LEVEL_SECONDS = 60;
+  const BONUS_SECONDS = 30; // from the prototype — not previously specified anywhere
+  const LIFE_EXTENSION_SECONDS = 60; // from the prototype — a life/ad-life adds this much time, doesn't reset the board
 
   let a = null; // current attempt state
   let selectedCell = null; // [r,c] or null
@@ -88,6 +107,8 @@ const Attempt = (() => {
     return 'seed-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   }
 
+  // ---- Attempt lifecycle ----
+
   function startAttempt() {
     const seed = newAttemptSeed();
     const shuffleRng = GameEngine.makeRng(seed + ':theme-shuffle');
@@ -99,53 +120,70 @@ const Attempt = (() => {
       slotIndex: 0,
       levelsReached: 0,
       totalScore: 0,
-      timeBonusMs: 0,
-      livesRemaining: STARTING_LIVES,
-      moves: [],
+      timeBonusMicros: 0,
+      livesUsedInRun: 0, // shared across the WHOLE attempt, never reset per level
       recentThemeIds: [], // last 3 *slot* themes completed, for bonus mixing
-      status: 'in_progress',
+      moves: [],
     };
     selectedCell = null;
-    startLevel();
-    window.showScreen('screen-game');
+    prepareLevel({ bonus: false });
   }
 
-  function currentThemeEmojis() {
-    if (a.isBonusLevel) return a.bonusEmojis;
-    return THEMES[a.slotThemeIds[a.slotIndex]].emojis;
-  }
-
-  function levelSeed() {
-    const bonusTag = a.isBonusLevel ? 'bonus' : 'slot';
-    return `${a.seed}:${bonusTag}:${a.slotIndex}:${a.retryCount || 0}`;
-  }
-
-  function startLevel(opts) {
-    opts = opts || {};
+  function prepareLevel(opts) {
     a.isBonusLevel = !!opts.bonus;
-    a.retryCount = opts.retry ? (a.retryCount || 0) + 1 : 0;
     a.adLifeUsedThisLevel = false;
 
     if (a.isBonusLevel) {
-      const pool = a.recentThemeIds.flatMap((id) => THEMES[id].emojis);
-      const pickRng = GameEngine.makeRng(levelSeed() + ':bonus-pool');
-      a.bonusEmojis = shuffle(pool, pickRng).slice(0, GameEngine.PIECES_PER_BOARD);
-      a.movesTarget = BONUS_MOVE_TARGET;
+      const pickRng = GameEngine.makeRng(`${a.seed}:bonus:${a.slotIndex}:pick`);
+      // 2 emoji from each of the last 3 completed themes — a visible mix,
+      // not an arbitrary pool, per the uploaded prototype.
+      a.levelEmojis = a.recentThemeIds.flatMap((id) =>
+        shuffle(THEMES[id].emojis, pickRng).slice(0, 2)
+      );
+      a.levelThemeName = 'Bonus mix';
+      a.levelMovesTarget = null; // no move cap in a bonus round
+      a.levelSeconds = BONUS_SECONDS;
     } else {
-      a.movesTarget = SLOT_MOVE_TARGETS[a.slotIndex];
+      const themeId = a.slotThemeIds[a.slotIndex];
+      a.levelEmojis = THEMES[themeId].emojis;
+      a.levelThemeName = THEMES[themeId].name;
+      a.levelMovesTarget = SLOT_MOVE_TARGETS[a.slotIndex];
+      a.levelSeconds = LEVEL_SECONDS;
     }
 
-    const boardRng = GameEngine.makeRng(levelSeed() + ':board');
+    renderReveal();
+    window.showScreen('screen-level-reveal');
+  }
+
+  function beginLevel() {
+    const boardRng = GameEngine.makeRng(`${a.seed}:${a.isBonusLevel ? 'bonus' : 'slot'}:${a.slotIndex}:board`);
     a.rng = boardRng;
     a.board = GameEngine.generatePlayableBoard(boardRng);
-    a.movesRemaining = a.movesTarget;
-    a.levelScore = 0;
-    a.levelStartTs = performance.now();
+    a.movesMade = 0;
+    a.levelScore = 0; // scratch total for this level only — committed to a.totalScore on completion
     selectedCell = null;
 
     setMessage('');
     renderBoard();
     renderHud();
+    startTimer(a.levelSeconds);
+    window.showScreen('screen-game');
+  }
+
+  // ---- Timer ----
+  // Deadline-based (tickTarget = performance.now() + remaining), not
+  // elapsed-based, specifically so a life/ad-life can extend the deadline
+  // in place without disturbing the board or move count.
+
+  function startTimer(seconds) {
+    a.tickTarget = performance.now() + seconds * 1000;
+    stopTicking();
+    tickHandle = setInterval(tick, 100);
+    tick();
+  }
+
+  function extendTimer(seconds) {
+    a.tickTarget = performance.now() + seconds * 1000;
     stopTicking();
     tickHandle = setInterval(tick, 100);
   }
@@ -156,8 +194,7 @@ const Attempt = (() => {
   }
 
   function msRemaining() {
-    const elapsed = performance.now() - a.levelStartTs;
-    return Math.max(0, TIME_LIMIT_MS - elapsed);
+    return Math.max(0, a.tickTarget - performance.now());
   }
 
   function tick() {
@@ -169,85 +206,91 @@ const Attempt = (() => {
     }
   }
 
+  // ---- Timeout / life handling ----
+
   function handleTimeout() {
     if (a.isBonusLevel) {
-      // Bonus rounds carry no downside risk beyond not finishing — whatever
-      // score was made stands, no life is lost. New decision (Phase 4),
-      // recorded in docs/DECISIONS.md — ARCHITECTURE.md doesn't define
-      // bonus-round failure behavior.
-      finishLevel();
+      // Bonus rounds carry no life risk — whatever was scored stands, and
+      // no time bonus is banked for them (only regular slots feed the
+      // Section 3.3 time-bonus accumulator).
+      finishBonusLevel();
+      return;
+    }
+    if (a.livesUsedInRun < STARTING_LIVES) {
+      a.livesUsedInRun++;
+      flashLifeToast(`Life used (${a.livesUsedInRun}/${STARTING_LIVES} this attempt) — +${LIFE_EXTENSION_SECONDS}s`);
+      renderHud();
+      extendTimer(LIFE_EXTENSION_SECONDS);
       return;
     }
     if (!a.adLifeUsedThisLevel) {
-      offerLifeChoice();
+      offerAdLife();
       return;
     }
-    loseLifeAndContinue();
+    failAttempt();
   }
 
-  function offerLifeChoice() {
+  function offerAdLife() {
     const box = el('game-message');
     box.innerHTML = '';
     const p = document.createElement('p');
     p.className = 'muted';
-    p.textContent = "Time's up. Use your one ad-earned life for this level, or spend a life from your pool?";
+    p.textContent = `Out of lives for this attempt. Watch an ad for +${LIFE_EXTENSION_SECONDS}s on this level, or give up?`;
     box.appendChild(p);
 
     const adBtn = document.createElement('button');
     adBtn.className = 'secondary';
-    adBtn.textContent = 'Watch ad for +60s (dev stub)';
+    adBtn.textContent = 'Watch ad for extra time (dev stub)';
     adBtn.addEventListener('click', () => {
       // DEV STUB — Phase 10 replaces this with a real AdMob rewarded-video
-      // flow verified server-side via SSV, per the score-integrity rule.
-      // Never trust a client "ad watched" flag once that phase lands.
+      // flow verified server-side via SSV. Never trust a client "ad
+      // watched" flag once that phase lands.
       a.adLifeUsedThisLevel = true;
-      a.levelStartTs = performance.now();
       setMessage('');
-      stopTicking();
-      tickHandle = setInterval(tick, 100);
+      renderHud();
+      extendTimer(LIFE_EXTENSION_SECONDS);
     });
 
-    const lifeBtn = document.createElement('button');
-    lifeBtn.className = 'danger';
-    lifeBtn.textContent = `Use a life (${a.livesRemaining} left)`;
-    lifeBtn.addEventListener('click', () => loseLifeAndContinue());
+    const giveUpBtn = document.createElement('button');
+    giveUpBtn.className = 'danger';
+    giveUpBtn.textContent = 'Give up';
+    giveUpBtn.addEventListener('click', () => failAttempt());
 
     box.appendChild(adBtn);
-    box.appendChild(lifeBtn);
+    box.appendChild(giveUpBtn);
   }
 
-  function loseLifeAndContinue() {
-    a.livesRemaining--;
-    if (a.livesRemaining <= 0) {
-      endAttempt();
-      return;
-    }
-    setMessage(`Out of time — life used. ${a.livesRemaining} left.`);
-    startLevel({ retry: true });
+  function flashLifeToast(text) {
+    setMessage(text);
   }
 
-  function finishLevel() {
+  // Ends the whole attempt immediately — not just the current level. The
+  // level in progress contributes 0 score and 0 time bonus (ARCHITECTURE.md
+  // Section 3.3), since a.levelScore was never committed to a.totalScore.
+  function failAttempt() {
     stopTicking();
-    const leftoverMs = a.isBonusLevel ? 0 : msRemaining();
-    a.timeBonusMs += leftoverMs;
+    a.status = 'completed';
+    renderSummary();
+    window.showScreen('screen-attempt-summary');
+    logPayload();
+  }
+
+  // ---- Level completion ----
+
+  function finishRegularLevel() {
+    stopTicking();
+    const leftoverMs = msRemaining();
+    a.timeBonusMicros += bankedMicros(leftoverMs);
     a.totalScore += a.levelScore;
     a.levelsReached++;
 
-    if (!a.isBonusLevel) {
-      const themeId = a.slotThemeIds[a.slotIndex];
-      a.recentThemeIds.push(themeId);
-      if (a.recentThemeIds.length > 3) a.recentThemeIds.shift();
-    }
-
-    if (a.isBonusLevel) {
-      a.isBonusLevel = false;
-      advanceOrFinishAttempt();
-      return;
-    }
+    const themeId = a.slotThemeIds[a.slotIndex];
+    a.recentThemeIds.push(themeId);
+    if (a.recentThemeIds.length > 3) a.recentThemeIds.shift();
 
     a.slotIndex++;
     if (a.slotIndex >= SLOT_LETTERS.length) {
-      endAttempt();
+      finishAttempt();
       return;
     }
 
@@ -258,28 +301,28 @@ const Attempt = (() => {
       return;
     }
 
-    startLevel();
+    prepareLevel({ bonus: false });
   }
 
-  function advanceOrFinishAttempt() {
+  function finishBonusLevel() {
+    a.totalScore += a.levelScore; // bonus score is never subject to the "incomplete = 0" rule
+    a.levelsReached++;
     if (a.slotIndex >= SLOT_LETTERS.length) {
-      endAttempt();
+      finishAttempt();
     } else {
-      startLevel();
-      window.showScreen('screen-game');
+      prepareLevel({ bonus: false });
     }
   }
 
-  function showBonusPrompt() {
-    window.showScreen('screen-bonus-prompt');
-  }
-
-  function endAttempt() {
+  function finishAttempt() {
     stopTicking();
     a.status = 'completed';
     renderSummary();
     window.showScreen('screen-attempt-summary');
+    logPayload();
+  }
 
+  function logPayload() {
     // Payload Phase 5's Edge Function will eventually consume. Not sent
     // anywhere yet — see file header.
     // eslint-disable-next-line no-console
@@ -287,6 +330,39 @@ const Attempt = (() => {
       seed: a.seed,
       moves: a.moves,
     });
+  }
+
+  // sec:milli:micro digit-clock accumulation, per ARCHITECTURE.md Section 3.3.
+  function bankedMicros(remainingMs) {
+    const wholeMs = Math.floor(remainingMs);
+    const fractionalUs = Math.round((remainingMs - wholeMs) * 1000);
+    return wholeMs * 1000 + fractionalUs;
+  }
+
+  // ---- Bonus prompt ----
+
+  function showBonusPrompt() {
+    window.showScreen('screen-bonus-prompt');
+  }
+
+  function acceptBonus() {
+    // DEV STUB — Phase 10 replaces this with a real AdMob rewarded-video
+    // flow, verified server-side, per the score-integrity rule.
+    prepareLevel({ bonus: true });
+  }
+
+  function skipBonus() {
+    prepareLevel({ bonus: false });
+  }
+
+  // ---- Reveal screen ----
+
+  function skipBonusFromReveal() {
+    prepareLevel({ bonus: false });
+  }
+
+  function confirmReveal() {
+    beginLevel();
   }
 
   // ---- Input ----
@@ -313,18 +389,18 @@ const Attempt = (() => {
     }
     a.board = result.board;
     a.levelScore += result.score;
-    a.movesRemaining--;
+    if (!a.isBonusLevel) a.movesMade++;
     a.moves.push({
       slot: a.isBonusLevel ? 'bonus' : SLOT_LETTERS[a.slotIndex],
       from: [r1, c1],
       to: [r, c],
-      tMs: Math.round(performance.now() - a.levelStartTs),
+      tMs: Math.round(a.levelSeconds * 1000 - msRemaining()),
     });
     renderBoard();
     renderHud();
 
-    if (a.movesRemaining <= 0) {
-      finishLevel();
+    if (!a.isBonusLevel && a.movesMade >= a.levelMovesTarget) {
+      finishRegularLevel();
     }
   }
 
@@ -340,10 +416,22 @@ const Attempt = (() => {
     }
   }
 
+  function renderReveal() {
+    el('reveal-eyebrow').textContent = a.isBonusLevel ? 'Optional Bonus' : 'Theme Reveal';
+    el('reveal-title').textContent = a.isBonusLevel
+      ? 'Bonus round'
+      : `Level ${SLOT_LETTERS[a.slotIndex]} — ${a.levelThemeName}`;
+    el('reveal-emojis').textContent = a.levelEmojis.join(' ');
+    el('reveal-theme-name').textContent = a.levelThemeName;
+    el('reveal-sub').textContent = a.isBonusLevel
+      ? `${BONUS_SECONDS} seconds · no lives · mix of your last 3 themes`
+      : `Clear ${a.levelMovesTarget} moves in ${LEVEL_SECONDS} seconds.`;
+    el('reveal-skip-btn').classList.toggle('hidden', !a.isBonusLevel);
+  }
+
   function renderBoard() {
     const boardEl = el('game-board');
     boardEl.innerHTML = '';
-    const emojis = currentThemeEmojis();
     for (let r = 0; r < GameEngine.BOARD_SIZE; r++) {
       for (let c = 0; c < GameEngine.BOARD_SIZE; c++) {
         const cell = document.createElement('button');
@@ -352,7 +440,7 @@ const Attempt = (() => {
         if (selectedCell && selectedCell[0] === r && selectedCell[1] === c) {
           cell.classList.add('selected');
         }
-        cell.textContent = emojis[a.board[r][c]];
+        cell.textContent = a.levelEmojis[a.board[r][c]];
         cell.addEventListener('click', () => onCellTap(r, c));
         boardEl.appendChild(cell);
       }
@@ -361,38 +449,40 @@ const Attempt = (() => {
 
   function renderHud() {
     el('game-slot-label').textContent = a.isBonusLevel ? 'Bonus' : `Level ${SLOT_LETTERS[a.slotIndex]}`;
-    el('game-moves').textContent = `Moves left: ${a.movesRemaining}`;
-    el('game-lives').textContent = '❤️'.repeat(a.livesRemaining) || 'No lives';
+    el('game-moves').textContent = a.isBonusLevel ? 'Moves: —' : `Moves: ${a.movesMade}/${a.levelMovesTarget}`;
+    const livesLeft = STARTING_LIVES - a.livesUsedInRun;
+    el('game-lives').textContent = a.isBonusLevel
+      ? '—'
+      : '❤️'.repeat(Math.max(0, livesLeft)) + (a.adLifeUsedThisLevel ? ' 🩹' : '');
     el('game-score').textContent = `Score: ${Math.round(a.totalScore + a.levelScore)}`;
   }
 
   function renderTimer(remainingMs) {
-    el('game-timer').textContent = `${(remainingMs / 1000).toFixed(1)}s`;
+    const timerEl = el('game-timer');
+    const secs = Math.ceil(remainingMs / 1000);
+    timerEl.textContent = `${secs}s`;
+    timerEl.classList.toggle('timer-warn', secs <= 10);
+  }
+
+  function formatTimeBonus(micros) {
+    const totalMs = Math.floor(micros / 1000);
+    const us = micros % 1000;
+    const totalSec = Math.floor(totalMs / 1000);
+    const ms = totalMs % 1000;
+    const mm = Math.floor(totalSec / 60);
+    const ss = totalSec % 60;
+    const pad = (n, l) => String(Math.floor(n)).padStart(l, '0');
+    return `${pad(mm, 2)}:${pad(ss, 2)}:${pad(ms, 3)}:${pad(us, 3)}`;
   }
 
   function renderSummary() {
-    const timeBonusMicros = Math.round(a.timeBonusMs * 1000);
     el('summary-score').textContent = `Score: ${Math.round(a.totalScore)} (client-computed, not yet server-validated)`;
-    el('summary-time-bonus').textContent = `Time bonus: ${timeBonusMicros.toLocaleString()} µs`;
-    el('summary-lives').textContent = `Lives remaining: ${a.livesRemaining}`;
+    el('summary-time-bonus').textContent = `Time bonus: ${formatTimeBonus(a.timeBonusMicros)} (mm:ss:ms:µs)`;
+    el('summary-lives').textContent = `Lives used: ${a.livesUsedInRun}/${STARTING_LIVES}`;
     el('summary-levels').textContent = `Levels reached: ${a.levelsReached}`;
   }
 
-  // ---- Bonus prompt screen hooks ----
-
-  function acceptBonus() {
-    // DEV STUB — Phase 10 replaces this with a real AdMob rewarded-video
-    // flow, verified server-side, per the score-integrity rule.
-    startLevel({ bonus: true });
-    window.showScreen('screen-game');
-  }
-
-  function skipBonus() {
-    startLevel();
-    window.showScreen('screen-game');
-  }
-
-  return { startAttempt, acceptBonus, skipBonus };
+  return { startAttempt, confirmReveal, skipBonusFromReveal, acceptBonus, skipBonus };
 })();
 
 window.Attempt = Attempt;
