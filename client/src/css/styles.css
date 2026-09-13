@@ -170,7 +170,6 @@ button:disabled {
 
 #screen-game {
   padding: 10px;
-  align-items: stretch; /* let game-wrap fill full height instead of being centered as a shorter block */
 }
 
 .game-wrap {
@@ -361,12 +360,26 @@ button:disabled {
    #screen-game has no align-items override, the base .screen rule centers
    this whole block both horizontally and vertically as a unit. */
 
+/* Spacer between the score strip and the board, sized to ~one tile row
+   (approximated as boardWidth/8 — the actual rendered tile is a few px
+   smaller once the grid's own padding/gaps are subtracted, close enough for
+   a visual "about one row" gap rather than a pixel-exact one). Negative
+   margin cancels game-wrap's own 10px flex gap on both sides of this
+   element, so the total visible gap is just this element's height, not
+   this height plus two extra 10px gaps. Also where the life/ad-life toast
+   renders now — absolutely positioned to fill this reserved space, so
+   showing/hiding it never changes any element's layout height (the same
+   anti-reflow reasoning as when the toast lived below the board, just
+   relocated per request into this gap instead). */
+.board-gap {
+  position: relative;
+  height: calc(min(94vw, 54dvh, 460px) / 8);
+  margin: -10px 0;
+}
+
 .board-stage {
-  flex: 1;
   display: flex;
-  align-items: center;
   justify-content: center;
-  position: relative; /* anchors .game-toast below, out of normal flow */
 }
 
 .game-board {
@@ -469,29 +482,26 @@ button:disabled {
   margin-top: 8px;
 }
 
-/* Toast: positioned absolutely just below the board (anchored to
-   .board-stage, which is position:relative above) rather than sitting in
-   normal document flow, and rather than overlapping the board's own last
-   row (top:100% starts it right past board-stage's own box, which is the
-   same size as the board). #screen-game is centered by the base .screen
-   rule, so a toast that used to occupy real flow height would grow/shrink
-   game-wrap's total height as it appeared/disappeared, shifting the
-   re-centered midpoint and visibly shoving the whole board up and back
-   down. Taking it out of flow entirely fixes that at the root rather than
-   trying to compensate with reserved space. */
+/* Toast: fills .board-gap (the reserved space between the score strip and
+   the board) rather than sitting in normal document flow. #screen-game is
+   centered by the base .screen rule, so a toast that occupied real flow
+   height would grow/shrink game-wrap's total height as it appeared/
+   disappeared, shifting the re-centered midpoint and visibly shoving the
+   whole board up and back down — taking it out of flow and overlaying a
+   fixed-size spacer instead fixes that at the root. */
 
 .game-toast {
   position: absolute;
-  left: 8px;
-  right: 8px;
-  top: 100%;
-  margin-top: 10px;
+  inset: 0;
   z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #fff;
   border-radius: 12px;
-  padding: 10px 14px;
-  font-size: 13px;
+  padding: 6px 14px;
+  font-size: 12px;
   font-weight: 700;
   text-align: center;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
@@ -499,10 +509,10 @@ button:disabled {
 }
 
 @keyframes toast-in-out {
-  0% { opacity: 0; transform: translateY(6px); }
+  0% { opacity: 0; transform: translateY(-4px); }
   10% { opacity: 1; transform: translateY(0); }
   85% { opacity: 1; transform: translateY(0); }
-  100% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 0; transform: translateY(-4px); }
 }
 
 /* ---- Phase 4: theme reveal ticket ---- */
