@@ -4,6 +4,16 @@ Most recent entry first.
 
 ---
 
+**2026-09-13 — Fourth same-day pass (neutral tile border, board vertical centering)**
+
+Two more corrections — full reasoning in DECISIONS.md's fourth 2026-09-13 block. Made the tile border neutral too (matching the transparent-fill reversal from the pass before this one) — tiles are now visually plain at rest, with the `--tile-color` mapping kept purely as data for the selection glow and match-blast animations rather than a resting-state visual. Fixed the board's vertical position: it was centered as part of one taller block (banner + HUD + board together), which pushed its own visual center below the screen's actual middle; `#screen-game` now stretches to full height and `.board-stage` takes `flex: 1`, so the board centers within the space left below the header instead of the header pushing the whole group's center down.
+
+CSS-only change; no JS or mechanics touched.
+
+**Next session start point:** re-check board vertical position on a real device across a couple of different screen sizes/aspect ratios, and confirm the fully-neutral tile appearance still reads as a comfortable, uncluttered board. Once confirmed, check off Phase 4 in ROADMAP.md and proceed to Phase 5 — Score integrity.
+
+---
+
 **2026-09-13 — Third same-day pass (toast position, HUD sizing, tile fill reverted)**
 
 Three quick corrections from a screenshot of the previous pass's live result — full reasoning in DECISIONS.md's third 2026-09-13 block. Moved the life-used toast from `bottom: 10px` (which sat inside the board's own box, overlapping its last row) to `top: 100%` with a small margin, so it now renders just below the board instead of on top of it — still fully out of document flow, so the earlier reflow fix stays intact. Enlarged only the Moves and Lives HUD values to 19px, leaving everything else (Timer, labels) untouched. Reverted the tinted tile-background fill added last pass back to a fully transparent background — border-only color coding is back, with the `--tile-color` palette itself unchanged so the selection glow and match-blast animation still work off it.

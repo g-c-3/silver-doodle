@@ -159,3 +159,11 @@ Three quick corrections against the pass immediately above, from a screenshot of
 **Moves and Lives values enlarged.** `#game-moves` and `.hud-lives` bumped to 19px, matching the size the request asked for specifically — nothing else in the HUD (Timer's two-tier display, chip labels) was touched, per the explicit "nothing else."
 
 **Tile background fill reverted.** The `color-mix()` tinted fill added in the previous pass turned out not to be wanted after seeing it live — tiles are back to a transparent background, showing only the colored border. The `--tile-color` mapping itself (the palette redone in the previous block) is unchanged and still drives the selected-tile glow and the match-blast animation, since those only reference the border/shadow color, not the fill.
+
+## 2026-09-13 — Fourth same-day pass (neutral tile border, board vertical centering)
+
+Two more corrections against the pass immediately above.
+
+**Tile border also made neutral.** Following the tinted-fill reversal above, the border itself is now a flat neutral color too (`#34304a`, matching every other card border in the UI) rather than `var(--tile-color, ...)`. Tiles are visually plain at rest now. The `--tile-color` custom property is still set by the unchanged `.tile-color-N` classes and is still what the selection glow and match-blast animations read from — the color-coding exists purely as data for those two moments now, not as a resting-state visual.
+
+**Board moved to occupy the true vertical middle of the screen.** Previously `#screen-game`'s whole content block (theme banner + HUD + score strip + board) was centered as one unit by the base `.screen` rule's `align-items: center` — which meant the board's own visual center sat below the screen's actual middle, pushed down by everything stacked above it in that same centered block. Fixed by having `#screen-game` stretch `.game-wrap` to full height instead (`align-items: stretch`) and giving `.board-stage` `flex: 1`, so the banner/HUD sit at their natural height at the top and the board is centered within whatever vertical space is left below them — which is what actually reads as "the middle of the screen" once the header takes up its own space, rather than the middle of a shorter combined block.
