@@ -90,14 +90,26 @@
   <!-- Game: single level in progress -->
   <section id="screen-game" class="screen hidden">
     <div class="game-wrap">
-      <div class="hud-grid">
-        <div class="hud-chip">
-          <span class="hud-chip-label">Level</span>
-          <span class="hud-chip-value" id="game-slot-label"></span>
+      <div class="theme-banner" id="theme-banner">
+        <span class="theme-banner-glow"></span>
+        <span class="theme-banner-icon" id="theme-banner-icon"></span>
+        <div class="theme-banner-info">
+          <span class="theme-banner-level" id="theme-banner-level"></span>
+          <span class="theme-banner-name" id="theme-banner-name"></span>
         </div>
-        <div class="hud-chip">
+        <div class="theme-banner-score">
+          <span class="hud-chip-label">Score</span>
+          <span class="theme-banner-score-num" id="game-score"></span>
+        </div>
+      </div>
+
+      <div class="hud-grid">
+        <div class="hud-chip hud-chip-timer">
           <span class="hud-chip-label">Timer</span>
-          <span class="hud-chip-value" id="game-timer"></span>
+          <span class="hud-chip-value timer-value">
+            <span id="game-timer-sec"></span>
+            <span id="game-timer-sub" class="timer-sub"></span>
+          </span>
         </div>
         <div class="hud-chip">
           <span class="hud-chip-label">Moves</span>
@@ -109,21 +121,15 @@
         </div>
       </div>
       <div class="score-strip">
-        <div class="score-block">
-          <span class="hud-chip-label">Score</span>
-          <span class="score-num" id="game-score"></span>
-        </div>
-        <div class="score-block score-block-right">
-          <span class="hud-chip-label">Time bonus banked</span>
-          <span class="timebonus-num" id="game-timebonus"></span>
-        </div>
+        <span class="hud-chip-label">Time bonus banked</span>
+        <span class="timebonus-num" id="game-timebonus"></span>
       </div>
 
       <div class="board-stage">
         <div id="game-board" class="game-board"></div>
+        <div id="game-toast" class="game-toast hidden"></div>
       </div>
 
-      <div id="game-toast" class="game-toast hidden"></div>
       <div id="game-message"></div>
     </div>
   </section>
