@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-13 (theme emoji set finalized).
+Last updated: 2026-09-14 (Phase 5 score-replay Edge Function).
 
 ## 1. Stack
 
@@ -132,7 +132,7 @@ These values are not derivable from Section 3.1's scoring/move-target spec alone
 - **Bonus rounds:** a flat 30-second timer, no move cap at all, and no life risk — the timer simply ends the round and whatever was scored stands. Bonus levels count toward `levels_reached` but their score is never subject to the "incomplete = 0" rule regular slots use. The piece mix is deterministic: 2 emoji drawn from each of the 3 most recently completed slot themes.
 - **Ad count:** both the ad-life grant and the bonus-round entry gate are single-ad, per the existing 2026-09-11 "Ad cadence" decision — the uploaded prototype simulates 2 ads per gate, but is judged to predate that decision rather than supersede it.
 
-Implemented in `client/src/js/game-engine.js` (pure match/cascade/scoring logic) and `client/src/js/attempt.js` (state machine, rendering, input). Both files currently stub two later-phase dependencies rather than blocking on them: the daily game-definition seed/theme-shuffle is generated client-side pending Phase 6, and the ad-life/bonus-ad gates grant immediately with no real AdMob flow pending Phase 10. Score submission to the Phase 5 Edge Function is not wired — the client computes and displays a score locally, explicitly labeled as not server-validated.
+Implemented in `client/src/js/game-engine.js` (pure match/cascade/scoring logic) and `client/src/js/attempt.js` (state machine, rendering, input). Both files currently stub two later-phase dependencies rather than blocking on them: the daily game-definition seed/theme-shuffle is generated client-side pending Phase 6, and the ad-life/bonus-ad gates grant immediately with no real AdMob flow pending Phase 10. Score submission to the Phase 5 `score-replay` Edge Function is wired (`attempt.js`'s `submitAttempt()`) — the attempt-summary screen shows the client-computed figures only as a brief "(validating…)" preview, then switches to the server-authoritative response. See Section 5 for the payload contract and the function's current deployment/persistence gaps.
 
 ## 4. Daily Game Generation & Fairness Model
 
@@ -142,9 +142,36 @@ What is individually randomized per player is the **order** the 12 games are ser
 
 ## 5. Score Integrity Model
 
-The client never sends a raw score. Each attempt submits one batched payload — `{seed, moves[]}` — to a single Supabase Edge Function call at attempt completion. The function deterministically replays the run server-side (board seed, matches, cascades, time remaining) and computes the authoritative score, time bonus, lives used, and levels reached. This is a single call per attempt (not per level), which is both the anti-cheat model and the basis of the Supabase cost model in DECISIONS.md — roughly 12 Edge Function calls per player per day at 12 attempts/day, rather than ~96 under a per-level-call design.
+The client never sends a raw score. Each attempt submits one batched payload to a single Supabase Edge Function call (`server/functions/score-replay`) at attempt completion. The function deterministically replays the run server-side (board seed, matches, cascades) and computes the authoritative score, time bonus, lives used, and levels reached. This is a single call per attempt (not per level), which is both the anti-cheat model and the basis of the Supabase cost model in DECISIONS.md — roughly 12 Edge Function calls per player per day at 12 attempts/day, rather than ~96 under a per-level-call design.
 
-Ad-life grants and bonus-round entries are verified server-side via AdMob SSV callbacks, never trusted from a client-reported "ad watched" flag.
+**Payload contract (finalized Phase 5, 2026-09-14 — supersedes the earlier indicative `{seed, moves[]}` sketch):**
+
+```
+{
+  seed: string,
+  levels: [
+    {
+      slot: "A".."Z" | "bonus",
+      isBonus: boolean,
+      moves: [[r1, c1, r2, c2], ...],   // ordered valid swaps made on this level's board
+      livesUsedThisLevel: number,        // regular-pool lives spent to keep this level alive (0-3)
+      adLifeUsed: boolean,               // whether the single ad-earned life was used this level
+      elapsedMsAtEnd: number,            // cumulative elapsed ms on this level's own clock, across any extensions, at the moment it ended
+      outcome: "completed" | "failed"    // "failed" only ever valid on the payload's last, non-bonus entry
+    }
+  ]
+}
+```
+
+One record per level actually played (finished or, for at most the final entry, failed) — not a flat move log — so the server never has to reconstruct which moves/lives/timing belonged to which level after the fact. See docs/DECISIONS.md's 2026-09-14 "Phase 5 score-replay Edge Function" block for why the original flat-log sketch was replaced.
+
+**Response contract:** `{ valid: true, score, timeBonusMicros, livesUsed, adLivesUsed, levelsReached, status: "completed" }` on success, or `{ valid: false, error }` (HTTP 400) if any level's data fails validation (illegal move, life-pool overclaim, wrong move count for a claimed completion, elapsed time outside that level's own budget, etc).
+
+**Trust boundary, by design:** match/cascade scoring is fully replayed and never client-trusted — every point is recomputed from the seed and the submitted move list, with illegal moves rejected outright. Per-level elapsed time (which drives time bonus) remains client-reported, since the batched single-call design has no per-move server round-trip to measure it independently; the function instead bounds `elapsedMsAtEnd` to each level's own fixed time budget (60s/30s base + 60s per life/ad-life actually used, cross-checked against the shared 3-life pool). This limits a modified client to shifting a small time-bonus figure within one level's own budget — it cannot fabricate points, extra lives, extra levels, or an inflated move count.
+
+**Not yet wired (deferred to later phases):** the function currently computes and returns a result but does not persist a row to `attempts` (Section 6's `game_definition_id` FK has nothing to point at until Phase 6 generates `daily_game_definitions` rows), is not yet deployed to the live Supabase project (Phase 11 builds `deploy-functions.yml`), and slot-cap/score_day attribution (Section 8) aren't enforced here (Phase 7/8).
+
+Ad-life grants and bonus-round entries are verified server-side via AdMob SSV callbacks, never trusted from a client-reported "ad watched" flag — this remains a Phase 10 item, unaffected by Phase 5.
 
 ## 6. Data Model (Postgres, Supabase)
 

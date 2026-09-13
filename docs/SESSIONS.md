@@ -4,6 +4,24 @@ Most recent entry first.
 
 ---
 
+**2026-09-14 — Phase 4 manual test confirmed; Phase 5 score-replay Edge Function**
+
+Phase 4's manual device test was confirmed passing. Checked off Phase 4 in ROADMAP.md and proceeded to Phase 5.
+
+Built: `server/functions/score-replay/index.ts` (new) — a 1:1 TypeScript port of `game-engine.js`'s seeded RNG, board generation, match detection, scoring, and cascade resolution, plus a level-by-level replay orchestrator. Accepts `{seed, levels[]}` (see docs/ARCHITECTURE.md Section 5 for the finalized payload contract), regenerates every level's board deterministically from the seed, replays each submitted move (rejecting any that aren't legal, match-producing swaps), and returns the authoritative score/time-bonus/lives-used/ad-lives-used/levels-reached. Also validates: shared 3-life pool never exceeded across the whole attempt, the ad-earned life only used after the pool is spent, move counts matching a slot's fixed target for a claimed-completed level, and elapsed time never exceeding a level's own fixed time budget. Sanity-tested standalone in Node (not shipped, sandbox-only) against `game-engine.js` itself before delivery: identical board generation, identical scores/final-boards across a swap sequence, and a full 9-move slot-A replay (with one life used) producing the exact expected time-bonus figure — plus confirmed rejection of a tampered move and an over-claimed life count.
+
+Also modified: `client/src/js/attempt.js` — restructured the Phase 5 submission payload from a flat, timing-ambiguous `moves[]` log (the original `{slot, from, to, tMs}` shape, where `tMs` reset every time a life extended the timer) to per-level records assembled via a new `pushLevelRecord()`, pushed at the exact moment each level's outcome (completed or, for the final level only, failed) is decided. Added `submitAttempt()`, which POSTs the payload to the `score-replay` function via `window.db.functions.invoke()` at attempt end and stores the response; the attempt-summary screen now shows the client-computed figures only as a "(validating…)" preview until that response arrives, then switches to the server-authoritative numbers (or a "not validated" state if the call fails). No mechanics (lives, timer, level completion/failure rules) changed — this is entirely payload/submission plumbing on top of the existing Phase 4 state machine.
+
+Bugs fixed: none this session (new code, sanity-tested before delivery rather than found broken afterward).
+
+Decisions made: see docs/DECISIONS.md's 2026-09-14 "Phase 5 score-replay Edge Function" block — the payload restructure and why, the deliberate client-reported/budget-bounded time-bonus trust boundary, why persistence to `attempts` is deferred (the table's `game_definition_id` FK has nothing to point at until Phase 6), and the hand-ported-engine maintenance risk.
+
+Known gaps, not oversights: the function is not yet deployed to the live Supabase project (`deploy-functions.yml` is a Phase 11 deliverable — this session's sanity testing was Node-only, not against the actual Supabase Edge Runtime); it performs no database writes at all yet (pending Phase 6's `daily_game_definitions`); and slot-cap/score_day attribution (Section 8) aren't enforced here (Phase 7/8).
+
+**Next session start point:** two options depending on priority — (a) manually deploy `score-replay` to the live Supabase project via the dashboard's Edge Functions UI (doesn't require waiting for Phase 11's CI) and do a real end-to-end test from a GitHub Pages-hosted client through to a live function response, since this session's testing was Node-only; or (b) proceed directly to Phase 6 — daily game-definition generation — which is what actually unblocks persisting attempts. Either is a reasonable next step; Phase 6 is the one that unblocks the most downstream work (Phase 7 leaderboards, Phase 8 attempt caps).
+
+---
+
 **2026-09-13 — Seventh same-day pass (whole-grid blink fixed, toast trimmed again)**
 
 Fixed a confirmed bug: the entire board was flashing/dimming on every match, not just the matched tiles — caused by a leftover `.game-board.settling` animation applied to the whole grid on every post-cascade re-render, redundant with (and fighting against) the tile-level `.blasting` animation that was already the correct feedback. Removed entirely, both the JS toggling it and the CSS keyframes. Also trimmed the toast further: it now sizes to its own content height (a slim centered pill via `top:50%; transform:translateY(-50%)`) instead of stretching to fill the whole reserved gap regardless of padding, and both toast messages were shortened. Full reasoning in DECISIONS.md's seventh 2026-09-13 block.
