@@ -155,6 +155,7 @@ const Attempt = (() => {
       a.levelThemeName = 'Bonus mix';
       a.levelMovesTarget = null; // no move cap in a bonus round
       a.levelSeconds = BONUS_SECONDS;
+      a.levelIcon = '🎁';
       setThemeAccent('var(--gold)');
     } else {
       const themeId = a.slotThemeIds[a.slotIndex];
@@ -162,6 +163,7 @@ const Attempt = (() => {
       a.levelThemeName = THEMES[themeId].name;
       a.levelMovesTarget = SLOT_MOVE_TARGETS[a.slotIndex];
       a.levelSeconds = LEVEL_SECONDS;
+      a.levelIcon = a.levelEmojis[0];
       setThemeAccent(themeAccentColor(themeId));
     }
 
@@ -630,14 +632,28 @@ const Attempt = (() => {
     }
   }
 
+  function renderThemeBanner() {
+    el('theme-banner-icon').textContent = a.levelIcon;
+    el('theme-banner-level').textContent = a.isBonusLevel ? 'Bonus round' : `Level ${SLOT_LETTERS[a.slotIndex]}`;
+    el('theme-banner-name').textContent = a.levelThemeName;
+  }
+
   function renderHud() {
-    el('game-slot-label').textContent = a.isBonusLevel ? 'Bonus' : SLOT_LETTERS[a.slotIndex];
+    renderThemeBanner();
     el('game-moves').textContent = a.isBonusLevel ? '—' : `${a.movesMade}/${a.levelMovesTarget}`;
     const livesLeft = STARTING_LIVES - a.livesUsedInRun;
     el('game-lives').textContent = a.isBonusLevel
       ? '—'
       : '❤️'.repeat(Math.max(0, livesLeft)) + '🤍'.repeat(Math.min(STARTING_LIVES, a.livesUsedInRun)) + (a.adLifeUsedThisLevel ? ' 🎬' : '');
-    el('game-score').textContent = Math.round(a.totalScore + a.levelScore).toLocaleString();
+
+    const scoreEl = el('game-score');
+    const newScoreText = Math.round(a.totalScore + a.levelScore).toLocaleString();
+    if (scoreEl.textContent !== newScoreText) {
+      scoreEl.textContent = newScoreText;
+      scoreEl.classList.remove('score-pop');
+      void scoreEl.offsetWidth; // restart the pop animation on every change
+      scoreEl.classList.add('score-pop');
+    }
     el('game-timebonus').textContent = formatTimeBonus(a.timeBonusMicros);
   }
 
@@ -647,13 +663,14 @@ const Attempt = (() => {
     const s = Math.floor(wholeMs / 1000);
     const ms = wholeMs % 1000;
     const pad = (n, l) => String(n).padStart(l, '0');
-    return `${pad(s, 2)}:${pad(ms, 3)}:${pad(Math.max(0, fractionalUs), 3)}`;
+    return { sec: pad(s, 2), sub: `${pad(ms, 3)}:${pad(Math.max(0, fractionalUs), 3)}` };
   }
 
   function renderTimer(remainingMs) {
-    const timerEl = el('game-timer');
-    timerEl.textContent = formatCountdown(remainingMs);
-    timerEl.classList.toggle('timer-warn', remainingMs <= 10000);
+    const { sec, sub } = formatCountdown(remainingMs);
+    el('game-timer-sec').textContent = sec;
+    el('game-timer-sub').textContent = sub;
+    el('game-timer-sec').closest('.hud-chip-timer').classList.toggle('timer-warn', remainingMs <= 10000);
   }
 
   function formatTimeBonus(micros) {
