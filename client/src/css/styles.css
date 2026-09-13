@@ -298,8 +298,14 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/* Moves and Lives specifically bumped up — requested bigger, nothing else
+   in the HUD. */
+#game-moves {
+  font-size: 19px;
+}
+
 .hud-lives {
-  font-size: 13px;
+  font-size: 19px;
   letter-spacing: 1px;
 }
 
@@ -373,14 +379,13 @@ button:disabled {
   position: relative;
 }
 
-/* Tinted fill + border, not border alone — a large colored area is far
-   easier to tell apart at a glance on a small tile than a thin 2px ring,
-   especially between hues that sit close together. Falls back to a flat
-   dark tile if color-mix() isn't supported (very old WebViews only). */
+/* Transparent fill, colored border only — the tinted background fill tried
+   in the previous pass was reverted on request. The --tile-color mapping
+   itself is unchanged and still drives the selection glow and match-blast
+   animations below; only the resting-state background changed. */
 .game-cell {
   aspect-ratio: 1 / 1;
-  background: #2a2540;
-  background: color-mix(in srgb, var(--tile-color, #34304a) 24%, #201c30);
+  background: transparent;
   border: 1.5px solid var(--tile-color, #34304a);
   border-radius: 8px;
   font-size: clamp(15px, 4vw, 22px);
@@ -460,10 +465,12 @@ button:disabled {
   margin-top: 8px;
 }
 
-/* Toast: positioned absolutely over the bottom of the board (anchored to
+/* Toast: positioned absolutely just below the board (anchored to
    .board-stage, which is position:relative above) rather than sitting in
-   normal document flow. #screen-game is centered by the base .screen rule,
-   so a toast that used to occupy real flow height would grow/shrink
+   normal document flow, and rather than overlapping the board's own last
+   row (top:100% starts it right past board-stage's own box, which is the
+   same size as the board). #screen-game is centered by the base .screen
+   rule, so a toast that used to occupy real flow height would grow/shrink
    game-wrap's total height as it appeared/disappeared, shifting the
    re-centered midpoint and visibly shoving the whole board up and back
    down. Taking it out of flow entirely fixes that at the root rather than
@@ -473,7 +480,8 @@ button:disabled {
   position: absolute;
   left: 8px;
   right: 8px;
-  bottom: 10px;
+  top: 100%;
+  margin-top: 10px;
   z-index: 5;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #fff;
