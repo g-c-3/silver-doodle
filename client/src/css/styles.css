@@ -6,11 +6,16 @@
   --accent: #ff6f91;
   --accent-2: #7c6fff;
   --danger: #ff5c5c;
+  --gold: #f5b942;
   --radius: 16px;
 }
 
 * {
   box-sizing: border-box;
+}
+
+.hidden {
+  display: none !important;
 }
 
 html, body {
@@ -164,57 +169,178 @@ button:disabled {
 /* ---- Phase 4: game board ---- */
 
 #screen-game {
-  align-items: flex-start;
-  padding: 12px;
+  padding: 10px;
 }
 
 .game-wrap {
   width: 100%;
-  max-width: 420px;
+  max-width: 480px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.game-hud {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 6px 12px;
+/* HUD: a row of small stat chips, plus a score strip below. Replaces the
+   original single-row flex list, which read as cramped/plain. */
+
+.hud-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.hud-chip {
   background: var(--surface);
-  border-radius: var(--radius);
-  padding: 10px 14px;
+  border: 1px solid #34304a;
+  border-radius: 12px;
+  padding: 7px 4px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.hud-chip-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.hud-chip-value {
+  font-weight: 700;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-lives {
   font-size: 13px;
-  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.score-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid #34304a;
+  border-radius: 14px;
+  padding: 10px 14px;
+}
+
+.score-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.score-block-right {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.score-num {
+  font-weight: 800;
+  font-size: 21px;
+  color: var(--theme-accent, var(--accent));
+  font-variant-numeric: tabular-nums;
+}
+
+.timebonus-num {
+  font-weight: 700;
+  font-size: 12px;
+  color: #5eead4;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Board: sized so it's bounded by BOTH viewport width and height, so it
+   auto-shrinks on short/narrow screens instead of overflowing — and since
+   #screen-game has no align-items override, the base .screen rule centers
+   this whole block both horizontally and vertically as a unit. */
+
+.board-stage {
+  display: flex;
+  justify-content: center;
 }
 
 .game-board {
+  width: min(94vw, 56dvh, 460px);
+  aspect-ratio: 1 / 1;
   display: grid;
   grid-template-columns: repeat(8, 1fr);
   gap: 4px;
   background: var(--surface);
   border-radius: var(--radius);
   padding: 6px;
-  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  position: relative;
 }
 
 .game-cell {
   aspect-ratio: 1 / 1;
   background: #2a2540;
-  border: 1px solid #34304a;
+  border: 2px solid var(--tile-color, #34304a);
   border-radius: 8px;
-  font-size: clamp(16px, 4.2vw, 24px);
+  font-size: clamp(15px, 4vw, 22px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   cursor: pointer;
+  touch-action: none; /* so swipe gestures don't scroll the page */
+  transition: background 0.12s ease;
+}
+
+/* One color per piece type (board index 0-5), consistent across every
+   theme — a visible cue independent of which emoji happens to be showing. */
+.game-cell.tile-color-0 { --tile-color: var(--accent); }
+.game-cell.tile-color-1 { --tile-color: #5eead4; }
+.game-cell.tile-color-2 { --tile-color: var(--gold); }
+.game-cell.tile-color-3 { --tile-color: var(--accent-2); }
+.game-cell.tile-color-4 { --tile-color: #4ade80; }
+.game-cell.tile-color-5 { --tile-color: #38bdf8; }
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 6px 1px var(--tile-color), inset 0 0 0 2px var(--tile-color); }
+  50% { box-shadow: 0 0 16px 6px var(--tile-color), inset 0 0 0 2px var(--tile-color); }
 }
 
 .game-cell.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent) inset;
+  animation: pulse-glow 0.9s ease-in-out infinite;
+  transform: scale(0.95);
+}
+
+@keyframes tile-blast {
+  0% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 var(--tile-color); }
+  40% { transform: scale(1.4); opacity: 0.9; box-shadow: 0 0 18px 10px var(--tile-color); }
+  100% { transform: scale(0); opacity: 0; box-shadow: 0 0 0 0 transparent; }
+}
+
+.game-cell.blasting {
+  animation: tile-blast 0.32s ease-out forwards;
+  z-index: 2;
+}
+
+@keyframes cell-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+.game-cell.invalid-shake {
+  animation: cell-shake 0.22s ease-in-out;
+  border-color: var(--danger);
+}
+
+@keyframes board-settle {
+  0% { opacity: 0.4; transform: scale(0.98); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.game-board.settling {
+  animation: board-settle 0.22s ease-out;
 }
 
 #game-message {
@@ -235,10 +361,31 @@ button:disabled {
   color: var(--danger);
 }
 
+/* Toast: a small dashboard-style bar at the bottom of the board, auto-
+   dismissed by JS after ~3s. */
+
+.game-toast {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  animation: toast-in-out 3s ease forwards;
+}
+
+@keyframes toast-in-out {
+  0% { opacity: 0; transform: translateY(6px); }
+  10% { opacity: 1; transform: translateY(0); }
+  85% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(6px); }
+}
+
 /* ---- Phase 4: theme reveal ticket ---- */
 
 .ticket {
-  border: 2px dashed var(--accent-2);
+  border: 2px dashed var(--theme-accent, var(--accent-2));
   border-radius: var(--radius);
   padding: 20px 14px;
   margin: 4px 0 8px;
@@ -247,20 +394,119 @@ button:disabled {
 }
 
 .ticket-emojis {
-  font-size: 32px;
-  letter-spacing: 6px;
-  margin-bottom: 8px;
-  line-height: 1.3;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px 14px;
+  max-width: 220px;
+  margin: 0 auto 10px;
+  font-size: 30px;
+  line-height: 1;
 }
 
 .ticket-theme {
   font-weight: 700;
   font-size: 18px;
-  color: var(--accent);
+  color: var(--theme-accent, var(--accent));
 }
 
 .ticket-sub {
   font-size: 12px;
-  color: var(--text-dim, var(--muted));
+  color: var(--muted);
   margin: 6px 0 0;
+}
+
+/* ---- Phase 4: level/bonus complete dashboard ---- */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 10px 0;
+  text-align: left;
+}
+
+.stat-item {
+  background: var(--surface);
+  border: 1px solid #34304a;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.stat-val {
+  font-weight: 700;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-val-accent {
+  color: var(--accent);
+}
+
+.confetti-field {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 40;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: 38%;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  animation: confetti-burst 1.1s ease-out forwards;
+}
+
+@keyframes confetti-burst {
+  0% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0.4); opacity: 0; }
+}
+
+/* ---- Phase 4: bonus-round prompt ---- */
+
+.bonus-badge {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  margin: 0 auto 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bonus-badge-glow {
+  position: absolute;
+  inset: -16px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(245, 185, 66, 0.55), transparent 70%);
+  animation: badge-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.7; }
+  50% { transform: scale(1.18); opacity: 1; }
+}
+
+.bonus-badge-emoji {
+  font-size: 46px;
+  position: relative;
+  z-index: 1;
+}
+
+.bonus-title {
+  font-size: 23px;
+}
+
+.accent-text {
+  color: var(--gold);
+}
+
+.bonus-copy {
+  margin-bottom: 4px;
 }
