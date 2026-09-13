@@ -169,7 +169,8 @@ button:disabled {
 /* ---- Phase 4: game board ---- */
 
 #screen-game {
-  padding: 10px;
+  padding: 16px 10px 10px;
+  align-items: flex-start; /* whole block starts near the top with breathing room, not vertically centered */
 }
 
 .game-wrap {
@@ -483,28 +484,29 @@ button:disabled {
 }
 
 /* Toast: fills .board-gap (the reserved space between the score strip and
-   the board) rather than sitting in normal document flow. #screen-game is
-   centered by the base .screen rule, so a toast that occupied real flow
-   height would grow/shrink game-wrap's total height as it appeared/
-   disappeared, shifting the re-centered midpoint and visibly shoving the
-   whole board up and back down — taking it out of flow and overlaying a
-   fixed-size spacer instead fixes that at the root. */
+   the board) rather than sitting in normal document flow — a toast that
+   occupied real flow height would grow/shrink game-wrap's total height as
+   it appeared/disappeared, which visibly shoved the board around before
+   this was made an overlay. Kept deliberately compact (small padding,
+   small font, tight line-height) so it fits neatly inside that one-tile-
+   row-tall gap rather than overflowing it. */
 
 .game-toast {
   position: absolute;
-  inset: 0;
+  inset: 2px;
   z-index: 5;
   display: flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #fff;
-  border-radius: 12px;
-  padding: 6px 14px;
-  font-size: 12px;
+  border-radius: 10px;
+  padding: 2px 12px;
+  font-size: 11px;
+  line-height: 1.15;
   font-weight: 700;
   text-align: center;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   animation: toast-in-out 3s ease forwards;
 }
 
