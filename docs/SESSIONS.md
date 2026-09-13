@@ -4,6 +4,30 @@ Most recent entry first.
 
 ---
 
+**2026-09-13 — Sixth same-day pass (top-aligned layout, toast trimmed)**
+
+Two more corrections from a screenshot of the fifth pass's result — full reasoning in DECISIONS.md's sixth 2026-09-13 block. `#screen-game` no longer vertically centers its whole content block as a unit (which left a large empty margin above the banner on tall screens); it now starts near the top with a small deliberate breathing gap instead. The toast filling `.board-gap` was trimmed (smaller padding/font/line-height, small inset instead of flush) to actually fit inside that one-tile-row gap rather than visually overflowing it.
+
+CSS-only change; no JS or mechanics touched.
+
+**Next session start point:** re-check the top-aligned layout on a real device — confirm the breathing space above the banner reads as intentional rather than accidental, and that the toast now sits cleanly within its gap. Once confirmed, check off Phase 4 in ROADMAP.md and proceed to Phase 5 — Score integrity.
+
+---
+
+**2026-09-13 — Theme emoji set finalized**
+
+Went through all 26 themes one at a time: offered a wider candidate list per theme (8-12 emoji beyond the original 6), weighted toward color/shape distinction from the theme's other pieces, with a recommendation each time; confirmed each theme's final 6 before moving to the next. This was prompted by the earlier same-day tile-color work — that fixed how pieces are color-*coded*, this fixes the actual emoji glyphs, several of which were too visually similar to each other within a theme regardless of any border/color system (lion/tiger/bear all tawny-brown, hamster/rabbit/mouse all small pale rodents, etc.).
+
+Updated `client/src/js/attempt.js`'s `THEMES` array (what ships) and docs/ARCHITECTURE.md Section 3.1's theme table (the canonical reference — this document is the source of truth for the game's data, same as any other spec value, so it needed updating alongside the code, not just the code). All 156 emoji (26 × 6) verified unique across the full set before delivery — one attempted duplicate (🐰 rabbit, already locked into Pets) was caught and rejected mid-process on the Seasonal & Holiday theme specifically because themes were being finalized in sequence with cross-checking against everything already locked in, not all at once at the end. Full theme-by-theme reasoning in DECISIONS.md's 2026-09-13 "Theme emoji set finalized" block.
+
+Caught and fixed before delivery, not from a live report: partway through this session's docs update, ARCHITECTURE.md's theme table was initially edited against a stale local sandbox copy that predated the Phase 4 session's Section 3.6 additions (a leftover from earlier in the conversation, never actually reconciled against what's live) — would have silently reverted that whole section had it shipped. Caught by diffing every file in the sandbox against the actual live repo content before finalizing this session's docs, which is now worth treating as standard practice before any DECISIONS/ARCHITECTURE edit in a long-running conversation, not just this one.
+
+No mechanics or rendering logic changed — this was purely a content/data update (which emoji represent which theme).
+
+**Next session start point:** manually re-check a handful of the redesigned themes on a real device — Wild Animals, Sports Equipment, and Faces & Emotions were the most heavily changed and are worth a specific look to confirm the new picks actually read as more distinct in practice, not just in theory. Once confirmed, check off Phase 4 in ROADMAP.md and proceed to Phase 5 — Score integrity.
+
+---
+
 **2026-09-13 — Fifth same-day pass (fixed board gap, toast relocated again)**
 
 The `flex: 1` proportional centering added in the previous pass looked right on the screen it was checked against but produced a large, screen-height-dependent gap above the board on a taller device. Replaced with a fixed ~one-tile-row gap (`.board-gap`, height approximated as `boardWidth / 8`) between the score strip and the board, with `#screen-game` reverted to the base `.screen` rule's normal centering. The toast moved once more — now filling `.board-gap` itself (absolutely positioned, `inset: 0`) rather than sitting below the board, continuing the same anti-reflow approach from earlier in the day (a fixed-size reserved area the toast overlays, so its appearance/disappearance never changes any element's layout height). Full reasoning in DECISIONS.md's fifth 2026-09-13 block.

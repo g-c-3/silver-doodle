@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-12 (Phase 4 session).
+Last updated: 2026-09-13 (theme emoji set finalized).
 
 ## 1. Stack
 
@@ -45,36 +45,36 @@ privacy-policy.html     served via GitHub Pages, required before Google Play sub
 
 ### 3.1 Levels, slots, and move targets
 
-26 themes, each with a fixed set of 6 native Unicode emoji, unique across all 26 sets (no glyph repeats anywhere in the game, so bonus-round mixing across any 3 themes never produces a duplicate-looking piece):
+26 themes, each with a fixed set of 6 native Unicode emoji, unique across all 26 sets (no glyph repeats anywhere in the game, so bonus-round mixing across any 3 themes never produces a duplicate-looking piece). Each theme's 6 were picked from a wider candidate list specifically for color/shape distinction from each other within that theme — several in the original list had 2-3 pieces that were too visually similar at small tile size (e.g. lion/tiger/bear all tawny-brown, or hamster/rabbit/mouse all small pale rodents); see docs/DECISIONS.md's 2026-09-13 "Theme emoji set finalized" block for the theme-by-theme reasoning:
 
 | # | Theme | Piece set |
 |---|---|---|
-| 1 | Pets | 🐶🐱🐹🐰🐭🦔 |
-| 2 | Farm Animals | 🐮🐷🐔🐴🐑🐐 |
-| 3 | Wild Animals | 🦁🐯🐻🐼🐨🐘 |
-| 4 | Faces & Emotions | 😀😂😍😎🤩🥳 |
-| 5 | Birds | 🐦🦅🦉🦜🐧🦢 |
-| 6 | Sea Creatures | 🐟🐠🐡🦈🐬🐳 |
-| 7 | Ocean & Reef | 🦀🐙🦑🪼🐚🦞 |
-| 8 | Reptiles & Amphibians | 🐊🐍🐢🦎🐸🦖 |
-| 9 | Insects & Bugs | 🐝🐞🐛🕷️🦗🪰 |
-| 10 | Fantasy Creatures | 🐉🦄🧜🧚🧞🧌 |
-| 11 | Fruits | 🍎🍊🍌🍇🍓🍉 |
-| 12 | Tropical Fruits | 🍍🥭🥝🍒🍑🍋 |
-| 13 | Vegetables | 🥕🥦🍆🌽🥔🍅 |
-| 14 | Desserts & Sweets | 🍰🍩🍭🍫🧁🍪 |
-| 15 | Fast Food & Snacks | 🍕🍔🍟🌭🍿🥨 |
-| 16 | Drinks & Beverages | ☕🧋🥤🥛🧃🍵 |
-| 17 | Musical Instruments | 🎸🎹🥁🎺🎷🎻 |
-| 18 | Sports Equipment | ⚽🏀🏈⚾🎾🏐 |
+| 1 | Pets | 🐶🐱🐰🦔🐢🐾 |
+| 2 | Farm Animals | 🐮🐴🐑🦃🐔🦆 |
+| 3 | Wild Animals | 🐯🐼🐘🦓🦒🦏 |
+| 4 | Faces & Emotions | 😍😎🥳😡🤯🥶 |
+| 5 | Birds | 🦉🦜🐤🦢🦩🦚 |
+| 6 | Sea Creatures | 🐠🐡🦈🐬🐳🦭 |
+| 7 | Ocean & Reef | 🦀🐙🪼🐚🦞🐌 |
+| 8 | Reptiles & Amphibians | 🐊🐍🦎🐸🦖🦕 |
+| 9 | Insects & Bugs | 🐝🐞🐛🕷️🪲🦋 |
+| 10 | Fantasy Creatures | 🐉🦄🧜🧚🧌👻 |
+| 11 | Fruits | 🍏🍊🍌🍇🍓🍉 |
+| 12 | Tropical Fruits | 🍍🍑🥝🍒🥥🍋 |
+| 13 | Vegetables | 🥕🥦🍆🌽🧄🍅 |
+| 14 | Desserts & Sweets | 🍰🎂🍭🍫🧁🍪 |
+| 15 | Fast Food & Snacks | 🍕🍔🍟🌮🥙🥨 |
+| 16 | Drinks & Beverages | ☕🧋🥛🧃🍺🍷 |
+| 17 | Musical Instruments | 🎸🎹🥁🪕🎷🎤 |
+| 18 | Sports Equipment | ⚽🏈🎾🥎🏀🥊 |
 | 19 | Land Vehicles | 🚗🚌🚚🚜🏍️🚲 |
 | 20 | Air & Sea Vehicles | ✈️🚁🚀🚢⛵🛸 |
-| 21 | Weather & Sky | ☀️🌧️⛈️❄️🌈🌪️ |
-| 22 | Space & Celestial | 🪐🌍🌙⭐☄️🛰️ |
-| 23 | Tools & Hardware | 🔨🔧🪛🪚🔩⚙️ |
-| 24 | Electronics & Gadgets | 🤖💻📱⌚🕹️🔋 |
-| 25 | Card & Game Pieces | 🎲♟️🃏🎳🎯🎰 |
-| 26 | Seasonal & Holiday | 🎄🎃🎆🎁🥚🧧 |
+| 21 | Weather & Sky | ☀️🌧️⚡❄️🌈🌪️ |
+| 22 | Space & Celestial | 🪐🌍🌙⭐☄️🌕 |
+| 23 | Tools & Hardware | 🪚⚙️🧰🪜🧲📏 |
+| 24 | Electronics & Gadgets | 🤖💻⌚🕹️🔋💡 |
+| 25 | Card & Game Pieces | 🎲♟️🧩🎳🎯🎰 |
+| 26 | Seasonal & Holiday | 🎄🧨🎁🎊🥚🕯️ |
 
 A level's **slot** (A–Z) is a fixed position in the 26-level sequence and carries a fixed move target, regardless of which theme is shuffled into it for a given game:
 
