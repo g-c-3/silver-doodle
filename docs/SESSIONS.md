@@ -4,6 +4,18 @@ Most recent entry first.
 
 ---
 
+**2026-09-13 — Follow-up visual pass (reflow bug, timer, layout, tile colors)**
+
+Four more items from a fresh round of screenshots against the previous session's build. Full reasoning in DECISIONS.md's 2026-09-13 "Follow-up visual pass" block — summary here:
+
+Fixed a confirmed bug where the board visibly jumped up then back down whenever the life-used toast appeared/disappeared — the toast sat in normal document flow, so its height change shifted where `#screen-game`'s centered midpoint landed. Moved it to an absolutely-positioned overlay anchored to the board so it can no longer affect layout height at all. Split the timer display into big bold seconds with a small muted ms/µs line underneath, instead of one flat equal-weight string. Added a theme banner at the top of the game screen (level icon, name, and — moved out of its own strip — a large score with a pop animation on change), using space that was previously just empty due to the screen's vertical centering leaving a gap above content shorter than the viewport; dropped the now-redundant Level chip from the HUD grid. Rebuilt the 6-tile color palette — the actual cause of "colors blend together" was two hues sitting only 29° apart (teal and blue), not a broader perception problem, since the three hues the feedback called out as fine were already 85-140° apart from their neighbors — and added a tinted background fill under the border (via `color-mix()`) since a large colored area reads far more clearly than a thin ring at small tile sizes.
+
+No mechanics changed this session either — purely rendering/layout.
+
+**Next session start point:** manually re-test on a real device — confirm the toast no longer causes any board movement, the timer's two-tier display reads clearly at a glance, the theme banner looks right across a few different themes (check the icon/name/score layout doesn't clip on a long theme name like "Reptiles & Amphibians"), and the six tile colors are now clearly distinguishable from each other on an actual screen (not just reasoned about via hue math). Once confirmed, check off Phase 4 in ROADMAP.md and proceed to Phase 5 — Score integrity.
+
+---
+
 **2026-09-13 — Visual/interaction pass against screenshots**
 
 Gathered feedback as a batch of screenshots across the whole Phase 4 flow (reveal, in-level HUD/board, life-loss, level completion, bonus prompt, theme variety, attempt summary), noted each one without touching any files per explicit request, then applied everything in one pass at the end. Full list of what changed and the reasoning behind each is in DECISIONS.md's 2026-09-13 "Visual/interaction pass against screenshots" block — summary here:
