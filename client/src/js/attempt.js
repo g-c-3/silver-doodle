@@ -244,7 +244,7 @@ const Attempt = (() => {
     }
     if (a.livesUsedInRun < STARTING_LIVES) {
       a.livesUsedInRun++;
-      showToast(`💗 Life used (${a.livesUsedInRun}/${STARTING_LIVES} this attempt) — same board, +${LIFE_EXTENSION_SECONDS}s on the clock!`);
+      showToast(`💗 Life used (${a.livesUsedInRun}/${STARTING_LIVES}) — +${LIFE_EXTENSION_SECONDS}s`);
       renderHud();
       extendTimer(LIFE_EXTENSION_SECONDS);
       return;
@@ -274,7 +274,7 @@ const Attempt = (() => {
       a.adLifeUsedThisLevel = true;
       a.adLivesUsedInRun++;
       setMessage('');
-      showToast(`🎬 Ad watched — +${LIFE_EXTENSION_SECONDS}s on the clock, same board!`);
+      showToast(`🎬 Ad watched — +${LIFE_EXTENSION_SECONDS}s`);
       renderHud();
       extendTimer(LIFE_EXTENSION_SECONDS);
     });
@@ -560,9 +560,6 @@ const Attempt = (() => {
       a.board = result.finalBoard;
       a.levelScore += result.totalScore;
       renderBoard();
-      el('game-board').classList.remove('settling');
-      void el('game-board').offsetWidth;
-      el('game-board').classList.add('settling');
       renderHud();
       a.locked = false;
 
