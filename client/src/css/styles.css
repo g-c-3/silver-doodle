@@ -170,6 +170,7 @@ button:disabled {
 
 #screen-game {
   padding: 10px;
+  align-items: stretch; /* let game-wrap fill full height instead of being centered as a shorter block */
 }
 
 .game-wrap {
@@ -361,7 +362,9 @@ button:disabled {
    this whole block both horizontally and vertically as a unit. */
 
 .board-stage {
+  flex: 1;
   display: flex;
+  align-items: center;
   justify-content: center;
   position: relative; /* anchors .game-toast below, out of normal flow */
 }
@@ -379,14 +382,15 @@ button:disabled {
   position: relative;
 }
 
-/* Transparent fill, colored border only — the tinted background fill tried
-   in the previous pass was reverted on request. The --tile-color mapping
-   itself is unchanged and still drives the selection glow and match-blast
-   animations below; only the resting-state background changed. */
+/* Transparent fill, neutral resting border — both the tinted background and
+   the colored border were reverted on request across two follow-up passes.
+   The --tile-color mapping itself (set by .tile-color-N below) is
+   unchanged and still drives the selection glow and match-blast
+   animations; it just no longer shows up in the tile's resting state. */
 .game-cell {
   aspect-ratio: 1 / 1;
   background: transparent;
-  border: 1.5px solid var(--tile-color, #34304a);
+  border: 1.5px solid #34304a;
   border-radius: 8px;
   font-size: clamp(15px, 4vw, 22px);
   display: flex;
