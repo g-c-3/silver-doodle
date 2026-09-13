@@ -90,25 +90,83 @@
   <!-- Game: single level in progress -->
   <section id="screen-game" class="screen hidden">
     <div class="game-wrap">
-      <div class="game-hud">
-        <span id="game-slot-label"></span>
-        <span id="game-timer"></span>
-        <span id="game-moves"></span>
-        <span id="game-lives"></span>
-        <span id="game-score"></span>
+      <div class="hud-grid">
+        <div class="hud-chip">
+          <span class="hud-chip-label">Level</span>
+          <span class="hud-chip-value" id="game-slot-label"></span>
+        </div>
+        <div class="hud-chip">
+          <span class="hud-chip-label">Timer</span>
+          <span class="hud-chip-value" id="game-timer"></span>
+        </div>
+        <div class="hud-chip">
+          <span class="hud-chip-label">Moves</span>
+          <span class="hud-chip-value" id="game-moves"></span>
+        </div>
+        <div class="hud-chip">
+          <span class="hud-chip-label">Lives</span>
+          <span class="hud-chip-value hud-lives" id="game-lives"></span>
+        </div>
       </div>
-      <div id="game-board" class="game-board"></div>
+      <div class="score-strip">
+        <div class="score-block">
+          <span class="hud-chip-label">Score</span>
+          <span class="score-num" id="game-score"></span>
+        </div>
+        <div class="score-block score-block-right">
+          <span class="hud-chip-label">Time bonus banked</span>
+          <span class="timebonus-num" id="game-timebonus"></span>
+        </div>
+      </div>
+
+      <div class="board-stage">
+        <div id="game-board" class="game-board"></div>
+      </div>
+
+      <div id="game-toast" class="game-toast hidden"></div>
       <div id="game-message"></div>
+    </div>
+  </section>
+
+  <!-- Level / bonus round complete: brief celebration, then a stats dashboard -->
+  <section id="screen-level-complete" class="screen hidden">
+    <div class="center-column">
+      <div id="level-complete-confetti" class="confetti-field"></div>
+      <p class="muted" id="level-complete-eyebrow"></p>
+      <h1 id="level-complete-title"></h1>
+      <div class="stat-grid">
+        <div class="stat-item">
+          <span class="hud-chip-label">Points this level</span>
+          <span class="stat-val" id="lc-points"></span>
+        </div>
+        <div class="stat-item">
+          <span class="hud-chip-label">Time bonus banked</span>
+          <span class="stat-val" id="lc-time-bonus"></span>
+        </div>
+        <div class="stat-item">
+          <span class="hud-chip-label">Score so far</span>
+          <span class="stat-val" id="lc-total-score"></span>
+        </div>
+        <div class="stat-item">
+          <span class="hud-chip-label">Lives status</span>
+          <span class="stat-val" id="lc-lives"></span>
+        </div>
+      </div>
+      <button id="level-complete-continue-btn" type="button" class="primary"></button>
     </div>
   </section>
 
   <!-- Bonus round play-or-skip prompt -->
   <section id="screen-bonus-prompt" class="screen hidden">
     <div class="center-column">
-      <div class="logo">🎁</div>
-      <h1>Bonus round!</h1>
-      <p class="muted">Mixed pieces from your last 3 themes. Watch a rewarded ad to play, or skip ahead.</p>
-      <button id="bonus-play-btn" type="button" class="primary">Watch ad &amp; play</button>
+      <div class="bonus-badge">
+        <span class="bonus-badge-glow"></span>
+        <span class="bonus-badge-emoji">🎁</span>
+      </div>
+      <p class="muted">Bonus round unlocked</p>
+      <h1 class="bonus-title">Free points, <span class="accent-text">zero risk</span></h1>
+      <p class="muted bonus-copy">No lives on the line here — every point you score gets added straight to your total. Watch a quick ad to jump in, or skip ahead to the next level.</p>
+      <button id="bonus-play-btn" type="button" class="primary">🎬 Watch ad &amp; play for bonus points</button>
       <button id="bonus-skip-btn" type="button" class="link">Skip</button>
     </div>
   </section>
@@ -118,10 +176,24 @@
     <div class="center-column">
       <div class="logo">🏁</div>
       <h1>Attempt complete</h1>
-      <p id="summary-score" class="value"></p>
-      <p id="summary-time-bonus" class="value"></p>
-      <p id="summary-lives" class="value"></p>
-      <p id="summary-levels" class="value"></p>
+      <div class="stat-grid">
+        <div class="stat-item">
+          <span class="hud-chip-label">Score</span>
+          <span class="stat-val stat-val-accent" id="summary-score"></span>
+        </div>
+        <div class="stat-item">
+          <span class="hud-chip-label">Time bonus</span>
+          <span class="stat-val" id="summary-time-bonus"></span>
+        </div>
+        <div class="stat-item">
+          <span class="hud-chip-label">Lives used</span>
+          <span class="stat-val" id="summary-lives"></span>
+        </div>
+        <div class="stat-item">
+          <span class="hud-chip-label">Levels reached</span>
+          <span class="stat-val" id="summary-levels"></span>
+        </div>
+      </div>
       <p class="muted">This attempt has not been submitted anywhere — Phase 5 wires up server-side score validation and persistence.</p>
       <button id="summary-home-btn" type="button" class="primary">Back to home</button>
     </div>
