@@ -181,12 +181,95 @@ button:disabled {
   gap: 10px;
 }
 
-/* HUD: a row of small stat chips, plus a score strip below. Replaces the
-   original single-row flex list, which read as cramped/plain. */
+/* Theme banner: uses the space that used to sit empty above the HUD when
+   the centered game-wrap block was shorter than the viewport. Score lives
+   here now instead of in its own strip — a single prominent number reads
+   better than a small one — and the banner's icon/name/accent make each
+   level visually distinct rather than the HUD looking identical every
+   level regardless of theme. */
+
+.theme-banner {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid #34304a;
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.theme-banner-glow {
+  position: absolute;
+  top: -60px;
+  right: -40px;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--theme-accent, var(--accent)) 0%, transparent 70%);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.theme-banner-icon {
+  font-size: 40px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
+  position: relative;
+}
+
+.theme-banner-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.theme-banner-level {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--theme-accent, var(--accent));
+}
+
+.theme-banner-name {
+  font-size: 17px;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.theme-banner-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  position: relative;
+}
+
+.theme-banner-score-num {
+  font-size: 25px;
+  font-weight: 800;
+  color: var(--theme-accent, var(--accent));
+  font-variant-numeric: tabular-nums;
+  transition: transform 0.15s ease;
+}
+
+.theme-banner-score-num.score-pop {
+  transform: scale(1.18);
+}
+
+/* HUD: Timer / Moves / Lives — Level moved into the banner above, Score
+   moved out of its own strip and into the banner too. */
 
 .hud-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 6px;
 }
 
@@ -220,6 +303,35 @@ button:disabled {
   letter-spacing: 1px;
 }
 
+/* Timer: seconds run big and prominent; ms/µs run tiny underneath, rather
+   than one flat string where every digit reads with equal weight. */
+
+.timer-value {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  line-height: 1;
+}
+
+#game-timer-sec {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.timer-sub {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+
+.hud-chip-timer.timer-warn #game-timer-sec,
+.hud-chip-timer.timer-warn .timer-sub {
+  color: var(--danger);
+}
+
 .score-strip {
   display: flex;
   justify-content: space-between;
@@ -227,30 +339,12 @@ button:disabled {
   background: var(--surface);
   border: 1px solid #34304a;
   border-radius: 14px;
-  padding: 10px 14px;
-}
-
-.score-block {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.score-block-right {
-  align-items: flex-end;
-  text-align: right;
-}
-
-.score-num {
-  font-weight: 800;
-  font-size: 21px;
-  color: var(--theme-accent, var(--accent));
-  font-variant-numeric: tabular-nums;
+  padding: 8px 14px;
 }
 
 .timebonus-num {
   font-weight: 700;
-  font-size: 12px;
+  font-size: 13px;
   color: #5eead4;
   font-variant-numeric: tabular-nums;
 }
@@ -263,10 +357,11 @@ button:disabled {
 .board-stage {
   display: flex;
   justify-content: center;
+  position: relative; /* anchors .game-toast below, out of normal flow */
 }
 
 .game-board {
-  width: min(94vw, 56dvh, 460px);
+  width: min(94vw, 54dvh, 460px);
   aspect-ratio: 1 / 1;
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -278,10 +373,15 @@ button:disabled {
   position: relative;
 }
 
+/* Tinted fill + border, not border alone — a large colored area is far
+   easier to tell apart at a glance on a small tile than a thin 2px ring,
+   especially between hues that sit close together. Falls back to a flat
+   dark tile if color-mix() isn't supported (very old WebViews only). */
 .game-cell {
   aspect-ratio: 1 / 1;
   background: #2a2540;
-  border: 2px solid var(--tile-color, #34304a);
+  background: color-mix(in srgb, var(--tile-color, #34304a) 24%, #201c30);
+  border: 1.5px solid var(--tile-color, #34304a);
   border-radius: 8px;
   font-size: clamp(15px, 4vw, 22px);
   display: flex;
@@ -293,14 +393,17 @@ button:disabled {
   transition: background 0.12s ease;
 }
 
-/* One color per piece type (board index 0-5), consistent across every
-   theme — a visible cue independent of which emoji happens to be showing. */
-.game-cell.tile-color-0 { --tile-color: var(--accent); }
-.game-cell.tile-color-1 { --tile-color: #5eead4; }
-.game-cell.tile-color-2 { --tile-color: var(--gold); }
-.game-cell.tile-color-3 { --tile-color: var(--accent-2); }
-.game-cell.tile-color-4 { --tile-color: #4ade80; }
-.game-cell.tile-color-5 { --tile-color: #38bdf8; }
+/* Six hues spread ~50-85° apart (the previous set had two only 29° apart —
+   teal and blue — which is what actually caused the "colors blend
+   together" complaint; even spacing fixes that regardless of exact hue
+   choice). Red, green, and purple/indigo are kept close to their previous
+   values since those three were already reported as working fine. */
+.game-cell.tile-color-0 { --tile-color: hsl(350, 80%, 65%); }
+.game-cell.tile-color-1 { --tile-color: hsl(45, 85%, 58%); }
+.game-cell.tile-color-2 { --tile-color: hsl(130, 60%, 55%); }
+.game-cell.tile-color-3 { --tile-color: hsl(190, 75%, 55%); }
+.game-cell.tile-color-4 { --tile-color: hsl(245, 75%, 68%); }
+.game-cell.tile-color-5 { --tile-color: hsl(300, 65%, 65%); }
 
 @keyframes pulse-glow {
   0%, 100% { box-shadow: 0 0 6px 1px var(--tile-color), inset 0 0 0 2px var(--tile-color); }
@@ -357,14 +460,21 @@ button:disabled {
   margin-top: 8px;
 }
 
-#game-timer.timer-warn {
-  color: var(--danger);
-}
-
-/* Toast: a small dashboard-style bar at the bottom of the board, auto-
-   dismissed by JS after ~3s. */
+/* Toast: positioned absolutely over the bottom of the board (anchored to
+   .board-stage, which is position:relative above) rather than sitting in
+   normal document flow. #screen-game is centered by the base .screen rule,
+   so a toast that used to occupy real flow height would grow/shrink
+   game-wrap's total height as it appeared/disappeared, shifting the
+   re-centered midpoint and visibly shoving the whole board up and back
+   down. Taking it out of flow entirely fixes that at the root rather than
+   trying to compensate with reserved space. */
 
 .game-toast {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 10px;
+  z-index: 5;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #fff;
   border-radius: 12px;
@@ -372,6 +482,7 @@ button:disabled {
   font-size: 13px;
   font-weight: 700;
   text-align: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
   animation: toast-in-out 3s ease forwards;
 }
 
