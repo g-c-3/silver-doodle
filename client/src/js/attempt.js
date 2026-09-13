@@ -36,35 +36,40 @@ const Attempt = (() => {
     52, 56, 60, 64, 68, 72, 76, 81, 86, 91, 96, 101, 107,
   ];
 
-  // From docs/ARCHITECTURE.md Section 3.1 — 26 themes, 6 unique native emoji
-  // each, zero glyph repeats across the whole set.
+  // 26 themes, 6 emoji each — finalized by picking each theme's 6 from a
+  // wider candidate list, one theme at a time, specifically to maximize
+  // color/shape distinction within a theme (the original set had several
+  // themes where 2-3 pieces were too visually similar — e.g. lion/tiger/
+  // bear all tawny-brown, or hamster/rabbit/mouse all small pale rodents).
+  // Every glyph is unique across the whole set — verified in the sandbox
+  // before delivery, not just assumed.
   const THEMES = [
-    { name: 'Pets', emojis: ['🐶', '🐱', '🐹', '🐰', '🐭', '🦔'] },
-    { name: 'Farm Animals', emojis: ['🐮', '🐷', '🐔', '🐴', '🐑', '🐐'] },
-    { name: 'Wild Animals', emojis: ['🦁', '🐯', '🐻', '🐼', '🐨', '🐘'] },
-    { name: 'Faces & Emotions', emojis: ['😀', '😂', '😍', '😎', '🤩', '🥳'] },
-    { name: 'Birds', emojis: ['🐦', '🦅', '🦉', '🦜', '🐧', '🦢'] },
-    { name: 'Sea Creatures', emojis: ['🐟', '🐠', '🐡', '🦈', '🐬', '🐳'] },
-    { name: 'Ocean & Reef', emojis: ['🦀', '🐙', '🦑', '🪼', '🐚', '🦞'] },
-    { name: 'Reptiles & Amphibians', emojis: ['🐊', '🐍', '🐢', '🦎', '🐸', '🦖'] },
-    { name: 'Insects & Bugs', emojis: ['🐝', '🐞', '🐛', '🕷️', '🦗', '🪰'] },
-    { name: 'Fantasy Creatures', emojis: ['🐉', '🦄', '🧜', '🧚', '🧞', '🧌'] },
-    { name: 'Fruits', emojis: ['🍎', '🍊', '🍌', '🍇', '🍓', '🍉'] },
-    { name: 'Tropical Fruits', emojis: ['🍍', '🥭', '🥝', '🍒', '🍑', '🍋'] },
-    { name: 'Vegetables', emojis: ['🥕', '🥦', '🍆', '🌽', '🥔', '🍅'] },
-    { name: 'Desserts & Sweets', emojis: ['🍰', '🍩', '🍭', '🍫', '🧁', '🍪'] },
-    { name: 'Fast Food & Snacks', emojis: ['🍕', '🍔', '🍟', '🌭', '🍿', '🥨'] },
-    { name: 'Drinks & Beverages', emojis: ['☕', '🧋', '🥤', '🥛', '🧃', '🍵'] },
-    { name: 'Musical Instruments', emojis: ['🎸', '🎹', '🥁', '🎺', '🎷', '🎻'] },
-    { name: 'Sports Equipment', emojis: ['⚽', '🏀', '🏈', '⚾', '🎾', '🏐'] },
+    { name: 'Pets', emojis: ['🐶', '🐱', '🐰', '🦔', '🐢', '🐾'] },
+    { name: 'Farm Animals', emojis: ['🐮', '🐴', '🐑', '🦃', '🐔', '🦆'] },
+    { name: 'Wild Animals', emojis: ['🐯', '🐼', '🐘', '🦓', '🦒', '🦏'] },
+    { name: 'Faces & Emotions', emojis: ['😍', '😎', '🥳', '😡', '🤯', '🥶'] },
+    { name: 'Birds', emojis: ['🦉', '🦜', '🐤', '🦢', '🦩', '🦚'] },
+    { name: 'Sea Creatures', emojis: ['🐠', '🐡', '🦈', '🐬', '🐳', '🦭'] },
+    { name: 'Ocean & Reef', emojis: ['🦀', '🐙', '🪼', '🐚', '🦞', '🐌'] },
+    { name: 'Reptiles & Amphibians', emojis: ['🐊', '🐍', '🦎', '🐸', '🦖', '🦕'] },
+    { name: 'Insects & Bugs', emojis: ['🐝', '🐞', '🐛', '🕷️', '🪲', '🦋'] },
+    { name: 'Fantasy Creatures', emojis: ['🐉', '🦄', '🧜', '🧚', '🧌', '👻'] },
+    { name: 'Fruits', emojis: ['🍏', '🍊', '🍌', '🍇', '🍓', '🍉'] },
+    { name: 'Tropical Fruits', emojis: ['🍍', '🍑', '🥝', '🍒', '🥥', '🍋'] },
+    { name: 'Vegetables', emojis: ['🥕', '🥦', '🍆', '🌽', '🧄', '🍅'] },
+    { name: 'Desserts & Sweets', emojis: ['🍰', '🎂', '🍭', '🍫', '🧁', '🍪'] },
+    { name: 'Fast Food & Snacks', emojis: ['🍕', '🍔', '🍟', '🌮', '🥙', '🥨'] },
+    { name: 'Drinks & Beverages', emojis: ['☕', '🧋', '🥛', '🧃', '🍺', '🍷'] },
+    { name: 'Musical Instruments', emojis: ['🎸', '🎹', '🥁', '🪕', '🎷', '🎤'] },
+    { name: 'Sports Equipment', emojis: ['⚽', '🏈', '🎾', '🥎', '🏀', '🥊'] },
     { name: 'Land Vehicles', emojis: ['🚗', '🚌', '🚚', '🚜', '🏍️', '🚲'] },
     { name: 'Air & Sea Vehicles', emojis: ['✈️', '🚁', '🚀', '🚢', '⛵', '🛸'] },
-    { name: 'Weather & Sky', emojis: ['☀️', '🌧️', '⛈️', '❄️', '🌈', '🌪️'] },
-    { name: 'Space & Celestial', emojis: ['🪐', '🌍', '🌙', '⭐', '☄️', '🛰️'] },
-    { name: 'Tools & Hardware', emojis: ['🔨', '🔧', '🪛', '🪚', '🔩', '⚙️'] },
-    { name: 'Electronics & Gadgets', emojis: ['🤖', '💻', '📱', '⌚', '🕹️', '🔋'] },
-    { name: 'Card & Game Pieces', emojis: ['🎲', '♟️', '🃏', '🎳', '🎯', '🎰'] },
-    { name: 'Seasonal & Holiday', emojis: ['🎄', '🎃', '🎆', '🎁', '🥚', '🧧'] },
+    { name: 'Weather & Sky', emojis: ['☀️', '🌧️', '⚡', '❄️', '🌈', '🌪️'] },
+    { name: 'Space & Celestial', emojis: ['🪐', '🌍', '🌙', '⭐', '☄️', '🌕'] },
+    { name: 'Tools & Hardware', emojis: ['🪚', '⚙️', '🧰', '🪜', '🧲', '📏'] },
+    { name: 'Electronics & Gadgets', emojis: ['🤖', '💻', '⌚', '🕹️', '🔋', '💡'] },
+    { name: 'Card & Game Pieces', emojis: ['🎲', '♟️', '🧩', '🎳', '🎯', '🎰'] },
+    { name: 'Seasonal & Holiday', emojis: ['🎄', '🧨', '🎁', '🎊', '🥚', '🕯️'] },
   ];
 
   const STARTING_LIVES = 3;
