@@ -4,6 +4,16 @@ Most recent entry first.
 
 ---
 
+**2026-09-13 — Third same-day pass (toast position, HUD sizing, tile fill reverted)**
+
+Three quick corrections from a screenshot of the previous pass's live result — full reasoning in DECISIONS.md's third 2026-09-13 block. Moved the life-used toast from `bottom: 10px` (which sat inside the board's own box, overlapping its last row) to `top: 100%` with a small margin, so it now renders just below the board instead of on top of it — still fully out of document flow, so the earlier reflow fix stays intact. Enlarged only the Moves and Lives HUD values to 19px, leaving everything else (Timer, labels) untouched. Reverted the tinted tile-background fill added last pass back to a fully transparent background — border-only color coding is back, with the `--tile-color` palette itself unchanged so the selection glow and match-blast animation still work off it.
+
+CSS-only change; no JS or mechanics touched.
+
+**Next session start point:** re-check the toast's new position on a real device (confirm it doesn't render below the visible viewport on shorter screens, since it now extends past the board's bottom edge instead of overlapping inside it), and confirm Moves/Lives read clearly at the new size without crowding the HUD row. Once confirmed, check off Phase 4 in ROADMAP.md and proceed to Phase 5 — Score integrity.
+
+---
+
 **2026-09-13 — Follow-up visual pass (reflow bug, timer, layout, tile colors)**
 
 Four more items from a fresh round of screenshots against the previous session's build. Full reasoning in DECISIONS.md's 2026-09-13 "Follow-up visual pass" block — summary here:
