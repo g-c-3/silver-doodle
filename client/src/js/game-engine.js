@@ -275,12 +275,45 @@ const GameEngine = (() => {
     return board;
   }
 
+  // Like trySwap, but also exposes the intermediate state so the UI can
+  // animate the swap's own immediate match precisely (correct cell
+  // positions, correct piece colors) before jumping to the fully-resolved
+  // board. Cascade rounds after the first are not individually exposed —
+  // animating those exactly would require re-deriving cell identity across
+  // gravity shifts, which isn't worth the complexity for a match-3 board
+  // this size. See docs/DECISIONS.md for this scoping call.
+  function trySwapDetailed(board, r1, c1, r2, c2, rng) {
+    if (!isAdjacent(r1, c1, r2, c2)) return { valid: false };
+    const swappedBoard = cloneBoard(board);
+    const tmp = swappedBoard[r1][c1];
+    swappedBoard[r1][c1] = swappedBoard[r2][c2];
+    swappedBoard[r2][c2] = tmp;
+
+    const firstRoundRuns = findRuns(swappedBoard);
+    if (firstRoundRuns.length === 0) return { valid: false };
+
+    const { score: firstRoundScore, clearedCells: firstRoundCleared } = scoreRuns(firstRoundRuns);
+
+    const finalBoard = cloneBoard(swappedBoard);
+    const totalScore = resolveCascades(finalBoard, rng);
+
+    return {
+      valid: true,
+      swappedBoard,
+      firstRoundCleared, // Set of "r,c" keys, positions in swappedBoard
+      firstRoundScore,
+      finalBoard,
+      totalScore,
+    };
+  }
+
   return {
     BOARD_SIZE,
     PIECES_PER_BOARD,
     makeRng,
     generatePlayableBoard,
     trySwap,
+    trySwapDetailed,
     lineScore,
   };
 })();

@@ -14,6 +14,7 @@ const screens = [
   'screen-home',
   'screen-level-reveal',
   'screen-game',
+  'screen-level-complete',
   'screen-bonus-prompt',
   'screen-attempt-summary',
   'screen-profile',
@@ -159,6 +160,10 @@ document.getElementById('reveal-skip-btn').addEventListener('click', () => {
 
 document.getElementById('bonus-play-btn').addEventListener('click', () => {
   Attempt.acceptBonus();
+});
+
+document.getElementById('level-complete-continue-btn').addEventListener('click', () => {
+  Attempt.continueAfterLevelComplete();
 });
 
 document.getElementById('bonus-skip-btn').addEventListener('click', () => {

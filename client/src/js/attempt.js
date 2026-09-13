@@ -1,28 +1,17 @@
 // Match Emojis Daily — attempt orchestration (Phase 4: core game client)
 //
-// Ported from an uploaded playable spec demo (daily-match-playable-demo.html,
-// a 4-level proof-of-concept of the full 26-slot design) after an earlier
-// version of this file was written from ARCHITECTURE.md's spec text alone —
-// the ARCHITECTURE.md text alone did not have (and the demo clarified):
-//   - losing a life extends the SAME level's timer by 60s and continues on
-//     the same board/moves progress — it does NOT regenerate the board.
-//   - the 3 regular lives are consumed automatically, in order, before the
-//     one ad-earned life is ever offered.
-//   - running out of every life (3 regular + the ad-life) ends the WHOLE
-//     ATTEMPT immediately, not just the current level.
-//   - every level (bonus or not) is preceded by a mandatory theme-reveal
-//     screen; only the bonus reveal has a Skip.
-//   - bonus rounds run a flat 30s clock with no move cap and no life risk,
-//     using 2 emoji drawn from each of the 3 most recently completed themes.
-// See docs/DECISIONS.md's 2026-09-12 "Phase 4 rebuild against the uploaded
-// prototype" block for the full reconciliation, including the one place
-// this file deliberately does NOT copy the prototype: the demo's own
-// on-timeout copy claims an incomplete level "banks zero score," but its
-// code never rolls back the score already earned from matches made mid-
-// level. ARCHITECTURE.md Section 3.3 is explicit ("An incomplete level
-// contributes 0 to both Score and Time Bonus") and is treated as the
-// correct spec here — this file holds a level's score in a scratch total
-// and only commits it to the attempt total on successful completion.
+// Mechanics (life pool, level completion/failure, bonus-round rules, time-
+// bonus accounting) were ported from an uploaded playable prototype and are
+// unchanged from the previous revision of this file — see docs/DECISIONS.md's
+// 2026-09-12 "Phase 4 rebuild against the uploaded prototype" block for that
+// history. This revision is a visual/interaction pass on top of that,
+// requested against screenshots of the live build: swipe input, animated
+// match feedback, a redesigned HUD, theme-colored accents, a level-complete
+// celebration screen, and a couple of small bugs the screenshots caught
+// (the reveal screen's Skip button showing on regular levels; the attempt
+// summary's "lives used" count silently excluding the ad-earned life).
+// See docs/DECISIONS.md's 2026-09-13 "Visual/interaction pass against
+// screenshots" block for the specifics and reasoning behind each.
 //
 // KNOWN GAP: score submission to the Phase 5 Edge Function is not wired yet
 // (Phase 5 doesn't exist). The {seed, moves[]} payload is assembled and
@@ -78,14 +67,17 @@ const Attempt = (() => {
     { name: 'Seasonal & Holiday', emojis: ['🎄', '🎃', '🎆', '🎁', '🥚', '🧧'] },
   ];
 
-  const STARTING_LIVES = 3; // confirmed by the uploaded prototype
+  const STARTING_LIVES = 3;
   const LEVEL_SECONDS = 60;
-  const BONUS_SECONDS = 30; // from the prototype — not previously specified anywhere
-  const LIFE_EXTENSION_SECONDS = 60; // from the prototype — a life/ad-life adds this much time, doesn't reset the board
+  const BONUS_SECONDS = 30;
+  const LIFE_EXTENSION_SECONDS = 60;
+  const SWIPE_THRESHOLD_PX = 18; // pointer movement below this is treated as a tap, not a swipe
 
   let a = null; // current attempt state
-  let selectedCell = null; // [r,c] or null
+  let selectedCell = null; // [r,c] or null — used by the tap-tap flow only
   let tickHandle = null;
+  let toastHideHandle = null;
+  let pendingNext = null; // function to call from the level-complete screen's continue button
 
   function el(id) {
     return document.getElementById(id);
@@ -107,6 +99,25 @@ const Attempt = (() => {
     return 'seed-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   }
 
+  // A distinct accent hue per theme, spread evenly around the color wheel —
+  // 26 hand-picked colors would work too, but this guarantees even, visibly
+  // distinct spacing without hand-tuning, and costs nothing to extend if
+  // THEMES ever grows.
+  function themeAccentColor(themeId) {
+    const hue = Math.round((themeId * 360) / THEMES.length);
+    return `hsl(${hue}, 72%, 64%)`;
+  }
+
+  function setThemeAccent(color) {
+    document.documentElement.style.setProperty('--theme-accent', color);
+  }
+
+  function vibrate(ms) {
+    if (window.navigator && typeof window.navigator.vibrate === 'function') {
+      window.navigator.vibrate(ms);
+    }
+  }
+
   // ---- Attempt lifecycle ----
 
   function startAttempt() {
@@ -122,6 +133,7 @@ const Attempt = (() => {
       totalScore: 0,
       timeBonusMicros: 0,
       livesUsedInRun: 0, // shared across the WHOLE attempt, never reset per level
+      adLivesUsedInRun: 0, // count of ad-lives actually used, across the whole attempt
       recentThemeIds: [], // last 3 *slot* themes completed, for bonus mixing
       moves: [],
     };
@@ -143,12 +155,14 @@ const Attempt = (() => {
       a.levelThemeName = 'Bonus mix';
       a.levelMovesTarget = null; // no move cap in a bonus round
       a.levelSeconds = BONUS_SECONDS;
+      setThemeAccent('var(--gold)');
     } else {
       const themeId = a.slotThemeIds[a.slotIndex];
       a.levelEmojis = THEMES[themeId].emojis;
       a.levelThemeName = THEMES[themeId].name;
       a.levelMovesTarget = SLOT_MOVE_TARGETS[a.slotIndex];
       a.levelSeconds = LEVEL_SECONDS;
+      setThemeAccent(themeAccentColor(themeId));
     }
 
     renderReveal();
@@ -161,6 +175,7 @@ const Attempt = (() => {
     a.board = GameEngine.generatePlayableBoard(boardRng);
     a.movesMade = 0;
     a.levelScore = 0; // scratch total for this level only — committed to a.totalScore on completion
+    a.locked = false;
     selectedCell = null;
 
     setMessage('');
@@ -173,19 +188,23 @@ const Attempt = (() => {
   // ---- Timer ----
   // Deadline-based (tickTarget = performance.now() + remaining), not
   // elapsed-based, specifically so a life/ad-life can extend the deadline
-  // in place without disturbing the board or move count.
+  // in place without disturbing the board or move count. Ticks every 50ms
+  // (rather than 1s) so the displayed ss:mmm:µµµ clock reads as continuously
+  // running rather than jumping once a second — this is a cosmetic
+  // consistency choice with the sec:milli:micro time-bonus format, not a
+  // claim of real microsecond-accurate timing.
 
   function startTimer(seconds) {
     a.tickTarget = performance.now() + seconds * 1000;
     stopTicking();
-    tickHandle = setInterval(tick, 100);
+    tickHandle = setInterval(tick, 50);
     tick();
   }
 
   function extendTimer(seconds) {
     a.tickTarget = performance.now() + seconds * 1000;
     stopTicking();
-    tickHandle = setInterval(tick, 100);
+    tickHandle = setInterval(tick, 50);
   }
 
   function stopTicking() {
@@ -218,7 +237,7 @@ const Attempt = (() => {
     }
     if (a.livesUsedInRun < STARTING_LIVES) {
       a.livesUsedInRun++;
-      flashLifeToast(`Life used (${a.livesUsedInRun}/${STARTING_LIVES} this attempt) — +${LIFE_EXTENSION_SECONDS}s`);
+      showToast(`💗 Life used (${a.livesUsedInRun}/${STARTING_LIVES} this attempt) — same board, +${LIFE_EXTENSION_SECONDS}s on the clock!`);
       renderHud();
       extendTimer(LIFE_EXTENSION_SECONDS);
       return;
@@ -246,7 +265,9 @@ const Attempt = (() => {
       // flow verified server-side via SSV. Never trust a client "ad
       // watched" flag once that phase lands.
       a.adLifeUsedThisLevel = true;
+      a.adLivesUsedInRun++;
       setMessage('');
+      showToast(`🎬 Ad watched — +${LIFE_EXTENSION_SECONDS}s on the clock, same board!`);
       renderHud();
       extendTimer(LIFE_EXTENSION_SECONDS);
     });
@@ -258,10 +279,6 @@ const Attempt = (() => {
 
     box.appendChild(adBtn);
     box.appendChild(giveUpBtn);
-  }
-
-  function flashLifeToast(text) {
-    setMessage(text);
   }
 
   // Ends the whole attempt immediately — not just the current level. The
@@ -280,7 +297,8 @@ const Attempt = (() => {
   function finishRegularLevel() {
     stopTicking();
     const leftoverMs = msRemaining();
-    a.timeBonusMicros += bankedMicros(leftoverMs);
+    const bankedThisLevel = bankedMicros(leftoverMs);
+    a.timeBonusMicros += bankedThisLevel;
     a.totalScore += a.levelScore;
     a.levelsReached++;
 
@@ -289,29 +307,40 @@ const Attempt = (() => {
     if (a.recentThemeIds.length > 3) a.recentThemeIds.shift();
 
     a.slotIndex++;
+    let next;
     if (a.slotIndex >= SLOT_LETTERS.length) {
-      finishAttempt();
-      return;
+      next = finishAttempt;
+    } else if (a.slotIndex % 3 === 0 && a.recentThemeIds.length === 3) {
+      // Bonus round offered every 3rd *completed* slot, per
+      // docs/ARCHITECTURE.md Section 3.5.
+      next = showBonusPrompt;
+    } else {
+      next = () => prepareLevel({ bonus: false });
     }
 
-    // Bonus round offered every 3rd *completed* slot, per
-    // docs/ARCHITECTURE.md Section 3.5.
-    if (a.slotIndex % 3 === 0 && a.recentThemeIds.length === 3) {
-      showBonusPrompt();
-      return;
-    }
-
-    prepareLevel({ bonus: false });
+    showLevelCompleteScreen({
+      eyebrow: 'Level cleared',
+      title: `${a.levelThemeName} — done! 🎉`,
+      points: a.levelScore,
+      timeBonusThisLevel: bankedThisLevel,
+      continueLabel: a.slotIndex >= SLOT_LETTERS.length ? 'See results' : 'Play next',
+      next,
+    });
   }
 
   function finishBonusLevel() {
     a.totalScore += a.levelScore; // bonus score is never subject to the "incomplete = 0" rule
     a.levelsReached++;
-    if (a.slotIndex >= SLOT_LETTERS.length) {
-      finishAttempt();
-    } else {
-      prepareLevel({ bonus: false });
-    }
+    const next = a.slotIndex >= SLOT_LETTERS.length ? finishAttempt : () => prepareLevel({ bonus: false });
+
+    showLevelCompleteScreen({
+      eyebrow: 'Bonus round over',
+      title: 'Nice bonus round! 🎁',
+      points: a.levelScore,
+      timeBonusThisLevel: 0, // bonus rounds never bank time bonus
+      continueLabel: a.slotIndex >= SLOT_LETTERS.length ? 'See results' : 'Continue',
+      next,
+    });
   }
 
   function finishAttempt() {
@@ -337,6 +366,59 @@ const Attempt = (() => {
     const wholeMs = Math.floor(remainingMs);
     const fractionalUs = Math.round((remainingMs - wholeMs) * 1000);
     return wholeMs * 1000 + fractionalUs;
+  }
+
+  function livesStatusText() {
+    let text = `${a.livesUsedInRun}/${STARTING_LIVES} regular`;
+    if (a.adLivesUsedInRun > 0) {
+      text += ` + ${a.adLivesUsedInRun} ad-life${a.adLivesUsedInRun === 1 ? '' : 's'}`;
+    }
+    return text;
+  }
+
+  // ---- Level-complete celebration + stats screen ----
+
+  function showLevelCompleteScreen(data) {
+    pendingNext = data.next;
+    el('level-complete-eyebrow').textContent = data.eyebrow;
+    el('level-complete-title').textContent = data.title;
+    el('lc-points').textContent = `+${Math.round(data.points)}`;
+    el('lc-time-bonus').textContent = data.timeBonusThisLevel > 0 ? formatTimeBonus(data.timeBonusThisLevel) : '—';
+    el('lc-total-score').textContent = Math.round(a.totalScore).toLocaleString();
+    el('lc-lives').textContent = livesStatusText();
+    el('level-complete-continue-btn').textContent = data.continueLabel;
+    spawnConfetti();
+    window.showScreen('screen-level-complete');
+  }
+
+  function continueAfterLevelComplete() {
+    const next = pendingNext;
+    pendingNext = null;
+    if (next) next();
+  }
+
+  function spawnConfetti() {
+    const field = el('level-complete-confetti');
+    field.innerHTML = '';
+    const colors = ['#ff6f91', '#7c6fff', '#5eead4', '#f5b942', '#4ade80', '#38bdf8'];
+    const count = 26;
+    for (let i = 0; i < count; i++) {
+      const piece = document.createElement('span');
+      piece.className = 'confetti-piece';
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 90 + Math.random() * 170;
+      piece.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
+      piece.style.setProperty('--dy', `${Math.sin(angle) * dist - 50}px`);
+      piece.style.setProperty('--rot', `${Math.round(Math.random() * 360)}deg`);
+      piece.style.background = colors[i % colors.length];
+      piece.style.animationDelay = `${Math.round(Math.random() * 140)}ms`;
+      field.appendChild(piece);
+    }
+    // Celebration runs ~1.5s total (140ms max stagger + 1.1s animation);
+    // clean up afterward so it doesn't linger behind the next screen.
+    setTimeout(() => {
+      field.innerHTML = '';
+    }, 1500);
   }
 
   // ---- Bonus prompt ----
@@ -365,9 +447,53 @@ const Attempt = (() => {
     beginLevel();
   }
 
-  // ---- Input ----
+  // ---- Input: tap-tap AND swipe both work ----
 
-  function onCellTap(r, c) {
+  function cellEl(r, c) {
+    return document.querySelector(`.game-cell[data-r="${r}"][data-c="${c}"]`);
+  }
+
+  function onPointerDown(r, c, e) {
+    if (a.locked) return;
+    a.dragStart = { r, c, x: e.clientX, y: e.clientY };
+  }
+
+  // Registered once on the document, not per-cell — a swipe released
+  // outside any cell (e.g. dragged off the board edge) would otherwise
+  // never fire and leave a.dragStart stale, corrupting the next touch.
+  document.addEventListener('pointerup', (e) => {
+    if (!a || a.locked || !a.dragStart) return;
+    const start = a.dragStart;
+    a.dragStart = null;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist >= SWIPE_THRESHOLD_PX) {
+      // Swipe: swap directly with whichever adjacent cell the drag points
+      // toward. Any pending tap-selection is discarded — a swipe is a
+      // complete gesture on its own.
+      selectedCell = null;
+      let tr = start.r;
+      let tc = start.c;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        tc += dx > 0 ? 1 : -1;
+      } else {
+        tr += dy > 0 ? 1 : -1;
+      }
+      if (tr >= 0 && tr < GameEngine.BOARD_SIZE && tc >= 0 && tc < GameEngine.BOARD_SIZE) {
+        attemptSwapAt(start.r, start.c, tr, tc);
+      } else {
+        renderBoard();
+      }
+      return;
+    }
+
+    // Tap: fall back to the original select-then-tap-adjacent flow.
+    handleTap(start.r, start.c);
+  });
+
+  function handleTap(r, c) {
     if (!selectedCell) {
       selectedCell = [r, c];
       renderBoard();
@@ -379,29 +505,64 @@ const Attempt = (() => {
       renderBoard();
       return;
     }
-    const result = GameEngine.trySwap(a.board, r1, c1, r, c, a.rng);
     selectedCell = null;
+    attemptSwapAt(r1, c1, r, c);
+  }
+
+  // Runs the swap through the engine, then plays swap → blast → settle as a
+  // short animated sequence before checking level completion. Only the
+  // swap's own immediate match is blasted at exact positions (see
+  // GameEngine.trySwapDetailed's comment) — any further cascade rounds
+  // resolve directly to the final board after the same pause.
+  function attemptSwapAt(r1, c1, r2, c2) {
+    const result = GameEngine.trySwapDetailed(a.board, r1, c1, r2, c2, a.rng);
+
     if (!result.valid) {
-      // Invalid swap — does not consume a move, per
-      // docs/ARCHITECTURE.md Section 3.1.
+      vibrate(40);
+      [cellEl(r1, c1), cellEl(r2, c2)].forEach((node) => {
+        if (!node) return;
+        node.classList.remove('invalid-shake');
+        void node.offsetWidth; // restart the animation if it's already mid-shake
+        node.classList.add('invalid-shake');
+      });
       renderBoard();
       return;
     }
-    a.board = result.board;
-    a.levelScore += result.score;
+
+    a.locked = true;
+    a.board = result.swappedBoard;
+    renderBoard();
+
     if (!a.isBonusLevel) a.movesMade++;
     a.moves.push({
       slot: a.isBonusLevel ? 'bonus' : SLOT_LETTERS[a.slotIndex],
       from: [r1, c1],
-      to: [r, c],
+      to: [r2, c2],
       tMs: Math.round(a.levelSeconds * 1000 - msRemaining()),
     });
-    renderBoard();
-    renderHud();
 
-    if (!a.isBonusLevel && a.movesMade >= a.levelMovesTarget) {
-      finishRegularLevel();
-    }
+    setTimeout(() => {
+      result.firstRoundCleared.forEach((key) => {
+        const [r, c] = key.split(',').map(Number);
+        const node = cellEl(r, c);
+        if (node) node.classList.add('blasting');
+      });
+    }, 90);
+
+    setTimeout(() => {
+      a.board = result.finalBoard;
+      a.levelScore += result.totalScore;
+      renderBoard();
+      el('game-board').classList.remove('settling');
+      void el('game-board').offsetWidth;
+      el('game-board').classList.add('settling');
+      renderHud();
+      a.locked = false;
+
+      if (!a.isBonusLevel && a.movesMade >= a.levelMovesTarget) {
+        finishRegularLevel();
+      }
+    }, 420);
   }
 
   // ---- Rendering ----
@@ -416,12 +577,31 @@ const Attempt = (() => {
     }
   }
 
+  function showToast(text) {
+    const t = el('game-toast');
+    clearTimeout(toastHideHandle);
+    t.textContent = text;
+    t.classList.remove('hidden');
+    t.style.animation = 'none';
+    void t.offsetWidth; // restart the CSS animation even if a toast is already showing
+    t.style.animation = '';
+    toastHideHandle = setTimeout(() => {
+      t.classList.add('hidden');
+    }, 3000);
+  }
+
   function renderReveal() {
     el('reveal-eyebrow').textContent = a.isBonusLevel ? 'Optional Bonus' : 'Theme Reveal';
     el('reveal-title').textContent = a.isBonusLevel
       ? 'Bonus round'
       : `Level ${SLOT_LETTERS[a.slotIndex]} — ${a.levelThemeName}`;
-    el('reveal-emojis').textContent = a.levelEmojis.join(' ');
+    const emojiGrid = el('reveal-emojis');
+    emojiGrid.innerHTML = '';
+    a.levelEmojis.forEach((emoji) => {
+      const span = document.createElement('span');
+      span.textContent = emoji;
+      emojiGrid.appendChild(span);
+    });
     el('reveal-theme-name').textContent = a.levelThemeName;
     el('reveal-sub').textContent = a.isBonusLevel
       ? `${BONUS_SECONDS} seconds · no lives · mix of your last 3 themes`
@@ -436,32 +616,44 @@ const Attempt = (() => {
       for (let c = 0; c < GameEngine.BOARD_SIZE; c++) {
         const cell = document.createElement('button');
         cell.type = 'button';
-        cell.className = 'game-cell';
+        const pieceIndex = a.board[r][c];
+        cell.className = `game-cell tile-color-${pieceIndex}`;
+        cell.dataset.r = r;
+        cell.dataset.c = c;
         if (selectedCell && selectedCell[0] === r && selectedCell[1] === c) {
           cell.classList.add('selected');
         }
-        cell.textContent = a.levelEmojis[a.board[r][c]];
-        cell.addEventListener('click', () => onCellTap(r, c));
+        cell.textContent = a.levelEmojis[pieceIndex];
+        cell.addEventListener('pointerdown', (e) => onPointerDown(r, c, e));
         boardEl.appendChild(cell);
       }
     }
   }
 
   function renderHud() {
-    el('game-slot-label').textContent = a.isBonusLevel ? 'Bonus' : `Level ${SLOT_LETTERS[a.slotIndex]}`;
-    el('game-moves').textContent = a.isBonusLevel ? 'Moves: —' : `Moves: ${a.movesMade}/${a.levelMovesTarget}`;
+    el('game-slot-label').textContent = a.isBonusLevel ? 'Bonus' : SLOT_LETTERS[a.slotIndex];
+    el('game-moves').textContent = a.isBonusLevel ? '—' : `${a.movesMade}/${a.levelMovesTarget}`;
     const livesLeft = STARTING_LIVES - a.livesUsedInRun;
     el('game-lives').textContent = a.isBonusLevel
       ? '—'
-      : '❤️'.repeat(Math.max(0, livesLeft)) + (a.adLifeUsedThisLevel ? ' 🩹' : '');
-    el('game-score').textContent = `Score: ${Math.round(a.totalScore + a.levelScore)}`;
+      : '❤️'.repeat(Math.max(0, livesLeft)) + '🤍'.repeat(Math.min(STARTING_LIVES, a.livesUsedInRun)) + (a.adLifeUsedThisLevel ? ' 🎬' : '');
+    el('game-score').textContent = Math.round(a.totalScore + a.levelScore).toLocaleString();
+    el('game-timebonus').textContent = formatTimeBonus(a.timeBonusMicros);
+  }
+
+  function formatCountdown(remainingMs) {
+    const wholeMs = Math.max(0, Math.floor(remainingMs));
+    const fractionalUs = Math.round((remainingMs - Math.floor(remainingMs)) * 1000);
+    const s = Math.floor(wholeMs / 1000);
+    const ms = wholeMs % 1000;
+    const pad = (n, l) => String(n).padStart(l, '0');
+    return `${pad(s, 2)}:${pad(ms, 3)}:${pad(Math.max(0, fractionalUs), 3)}`;
   }
 
   function renderTimer(remainingMs) {
     const timerEl = el('game-timer');
-    const secs = Math.ceil(remainingMs / 1000);
-    timerEl.textContent = `${secs}s`;
-    timerEl.classList.toggle('timer-warn', secs <= 10);
+    timerEl.textContent = formatCountdown(remainingMs);
+    timerEl.classList.toggle('timer-warn', remainingMs <= 10000);
   }
 
   function formatTimeBonus(micros) {
@@ -476,13 +668,20 @@ const Attempt = (() => {
   }
 
   function renderSummary() {
-    el('summary-score').textContent = `Score: ${Math.round(a.totalScore)} (client-computed, not yet server-validated)`;
-    el('summary-time-bonus').textContent = `Time bonus: ${formatTimeBonus(a.timeBonusMicros)} (mm:ss:ms:µs)`;
-    el('summary-lives').textContent = `Lives used: ${a.livesUsedInRun}/${STARTING_LIVES}`;
-    el('summary-levels').textContent = `Levels reached: ${a.levelsReached}`;
+    el('summary-score').textContent = `${Math.round(a.totalScore).toLocaleString()} (not yet server-validated)`;
+    el('summary-time-bonus').textContent = `${formatTimeBonus(a.timeBonusMicros)} (mm:ss:ms:µs)`;
+    el('summary-lives').textContent = livesStatusText();
+    el('summary-levels').textContent = `${a.levelsReached}`;
   }
 
-  return { startAttempt, confirmReveal, skipBonusFromReveal, acceptBonus, skipBonus };
+  return {
+    startAttempt,
+    confirmReveal,
+    skipBonusFromReveal,
+    acceptBonus,
+    skipBonus,
+    continueAfterLevelComplete,
+  };
 })();
 
 window.Attempt = Attempt;
