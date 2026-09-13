@@ -4,6 +4,16 @@ Most recent entry first.
 
 ---
 
+**2026-09-13 — Seventh same-day pass (whole-grid blink fixed, toast trimmed again)**
+
+Fixed a confirmed bug: the entire board was flashing/dimming on every match, not just the matched tiles — caused by a leftover `.game-board.settling` animation applied to the whole grid on every post-cascade re-render, redundant with (and fighting against) the tile-level `.blasting` animation that was already the correct feedback. Removed entirely, both the JS toggling it and the CSS keyframes. Also trimmed the toast further: it now sizes to its own content height (a slim centered pill via `top:50%; transform:translateY(-50%)`) instead of stretching to fill the whole reserved gap regardless of padding, and both toast messages were shortened. Full reasoning in DECISIONS.md's seventh 2026-09-13 block.
+
+CSS/JS change; no mechanics touched (score/lives/completion logic untouched — purely rendering and copy).
+
+**Next session start point:** re-check on a real device that matches now animate cleanly (only the matched tiles blast, board stays visually stable otherwise) and that the toast reads as compact. Once confirmed, check off Phase 4 in ROADMAP.md and proceed to Phase 5 — Score integrity.
+
+---
+
 **2026-09-13 — Sixth same-day pass (top-aligned layout, toast trimmed)**
 
 Two more corrections from a screenshot of the fifth pass's result — full reasoning in DECISIONS.md's sixth 2026-09-13 block. `#screen-game` no longer vertically centers its whole content block as a unit (which left a large empty margin above the banner on tall screens); it now starts near the top with a small deliberate breathing gap instead. The toast filling `.board-gap` was trimmed (smaller padding/font/line-height, small inset instead of flush) to actually fit inside that one-tile-row gap rather than visually overflowing it.
