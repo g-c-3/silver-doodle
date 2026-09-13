@@ -4,6 +4,16 @@ Most recent entry first.
 
 ---
 
+**2026-09-13 — Fifth same-day pass (fixed board gap, toast relocated again)**
+
+The `flex: 1` proportional centering added in the previous pass looked right on the screen it was checked against but produced a large, screen-height-dependent gap above the board on a taller device. Replaced with a fixed ~one-tile-row gap (`.board-gap`, height approximated as `boardWidth / 8`) between the score strip and the board, with `#screen-game` reverted to the base `.screen` rule's normal centering. The toast moved once more — now filling `.board-gap` itself (absolutely positioned, `inset: 0`) rather than sitting below the board, continuing the same anti-reflow approach from earlier in the day (a fixed-size reserved area the toast overlays, so its appearance/disappearance never changes any element's layout height). Full reasoning in DECISIONS.md's fifth 2026-09-13 block.
+
+CSS/HTML-only change (toast moved in the DOM into the new spacer); no JS or mechanics touched — attempt.js only ever looks up `#game-toast` by id, so it didn't need any changes despite the DOM move.
+
+**Next session start point:** re-check the board's position and the toast's new location on a real device, ideally across a couple of different screen heights given that's exactly what prompted this pass. Once confirmed, check off Phase 4 in ROADMAP.md and proceed to Phase 5 — Score integrity.
+
+---
+
 **2026-09-13 — Fourth same-day pass (neutral tile border, board vertical centering)**
 
 Two more corrections — full reasoning in DECISIONS.md's fourth 2026-09-13 block. Made the tile border neutral too (matching the transparent-fill reversal from the pass before this one) — tiles are now visually plain at rest, with the `--tile-color` mapping kept purely as data for the selection glow and match-blast animations rather than a resting-state visual. Fixed the board's vertical position: it was centered as part of one taller block (banner + HUD + board together), which pushed its own visual center below the screen's actual middle; `#screen-game` now stretches to full height and `.board-stage` takes `flex: 1`, so the board centers within the space left below the header instead of the header pushing the whole group's center down.
