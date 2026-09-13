@@ -13,11 +13,22 @@
 // See docs/DECISIONS.md's 2026-09-13 "Visual/interaction pass against
 // screenshots" block for the specifics and reasoning behind each.
 //
-// KNOWN GAP: score submission to the Phase 5 Edge Function is not wired yet
-// (Phase 5 doesn't exist). The {seed, moves[]} payload is assembled and
-// logged to the console / shown in the summary screen, but nothing is sent
-// over the network and nothing is persisted. The score shown to the player
-// right now is client-computed and NOT authoritative.
+// PHASE 5 (score integrity): the attempt payload — {seed, levels[]}, one
+// record per finished/failed level via pushLevelRecord() — is submitted to
+// the `score-replay` Supabase Edge Function via submitAttempt() at attempt
+// end. The client-computed a.totalScore/timeBonusMicros/etc. shown live
+// during play are NEVER treated as final — the attempt-summary screen shows
+// them only as a "(validating…)" preview until the Edge Function's response
+// (a.serverResult) arrives, then switches to the server-authoritative
+// figures. See docs/ARCHITECTURE.md Section 5 and server/functions/
+// score-replay/index.ts for the payload contract and replay logic.
+//
+// KNOWN GAP: the Edge Function currently only computes and returns the
+// authoritative result — it does not yet persist a row to `attempts`, since
+// that table's game_definition_id is a NOT NULL FK into
+// `daily_game_definitions`, which Phase 6 (not yet built) is what actually
+// populates. Persistence, slot-cap enforcement, and score_day attribution
+// are wired once Phase 6/7/8 land.
 //
 // KNOWN GAP: docs/ARCHITECTURE.md Section 4 describes the daily game
 // definitions (12/day, identical for every player, server-generated) as a
@@ -140,7 +151,8 @@ const Attempt = (() => {
       livesUsedInRun: 0, // shared across the WHOLE attempt, never reset per level
       adLivesUsedInRun: 0, // count of ad-lives actually used, across the whole attempt
       recentThemeIds: [], // last 3 *slot* themes completed, for bonus mixing
-      moves: [],
+      payloadLevels: [], // Phase 5 submission payload — one record per finished/failed level, see pushLevelRecord()
+      serverResult: null, // filled in once submitAttempt()'s Edge Function call resolves
     };
     selectedCell = null;
     prepareLevel({ bonus: false });
@@ -185,6 +197,14 @@ const Attempt = (() => {
     a.locked = false;
     selectedCell = null;
 
+    // Phase 5 payload tracking for this level — see pushLevelRecord() and
+    // currentLevelElapsedMs(). Reset fresh per level; a life extension updates
+    // levelElapsedBaseMs/currentSegmentMs in place rather than resetting these.
+    a.currentLevelMoves = [];
+    a.levelElapsedBaseMs = 0;
+    a.currentSegmentMs = a.levelSeconds * 1000;
+    a.livesUsedAtLevelStart = a.livesUsedInRun;
+
     setMessage('');
     renderBoard();
     renderHud();
@@ -223,6 +243,16 @@ const Attempt = (() => {
     return Math.max(0, a.tickTarget - performance.now());
   }
 
+  // Cumulative elapsed ms on THIS level's own clock, since its very first
+  // start — survives across any life/ad-life extension, unlike msRemaining()
+  // which is always relative to the *current* timer segment. This is what
+  // Phase 5's score-replay Edge Function needs to independently recompute
+  // time bonus: budgetMs (60s/30s + 60s per life/ad-life used) minus this
+  // value at the moment the level ended.
+  function currentLevelElapsedMs() {
+    return a.levelElapsedBaseMs + (a.currentSegmentMs - msRemaining());
+  }
+
   function tick() {
     const remaining = msRemaining();
     renderTimer(remaining);
@@ -244,6 +274,10 @@ const Attempt = (() => {
     }
     if (a.livesUsedInRun < STARTING_LIVES) {
       a.livesUsedInRun++;
+      // The just-expired segment is fully spent (timeout only fires at
+      // remaining<=0) — bank its whole length before starting the next one.
+      a.levelElapsedBaseMs += a.currentSegmentMs;
+      a.currentSegmentMs = LIFE_EXTENSION_SECONDS * 1000;
       showToast(`💗 Life used (${a.livesUsedInRun}/${STARTING_LIVES}) — +${LIFE_EXTENSION_SECONDS}s`);
       renderHud();
       extendTimer(LIFE_EXTENSION_SECONDS);
@@ -273,6 +307,8 @@ const Attempt = (() => {
       // watched" flag once that phase lands.
       a.adLifeUsedThisLevel = true;
       a.adLivesUsedInRun++;
+      a.levelElapsedBaseMs += a.currentSegmentMs;
+      a.currentSegmentMs = LIFE_EXTENSION_SECONDS * 1000;
       setMessage('');
       showToast(`🎬 Ad watched — +${LIFE_EXTENSION_SECONDS}s`);
       renderHud();
@@ -293,10 +329,54 @@ const Attempt = (() => {
   // Section 3.3), since a.levelScore was never committed to a.totalScore.
   function failAttempt() {
     stopTicking();
+    pushLevelRecord('failed');
     a.status = 'completed';
     renderSummary();
     window.showScreen('screen-attempt-summary');
-    logPayload();
+    submitAttempt();
+  }
+
+  // ---- Phase 5 payload assembly ----
+  // One record per level (finished or failed), appended right before that
+  // level's outcome is committed — not derived after the fact from a flat
+  // move log, so there's no ambiguity about which moves/lives/timing belong
+  // to which level once the shared life pool and slot index have moved on.
+  function pushLevelRecord(outcome) {
+    a.payloadLevels.push({
+      slot: a.isBonusLevel ? 'bonus' : SLOT_LETTERS[a.slotIndex],
+      isBonus: a.isBonusLevel,
+      moves: a.currentLevelMoves, // [[r1,c1,r2,c2], ...], in play order
+      livesUsedThisLevel: a.livesUsedInRun - a.livesUsedAtLevelStart, // regular-pool lives spent to keep this level alive
+      adLifeUsed: a.adLifeUsedThisLevel,
+      elapsedMsAtEnd: Math.round(currentLevelElapsedMs()),
+      outcome, // 'completed' | 'failed' — 'failed' only ever the payload's last entry
+    });
+  }
+
+  // Submits {seed, levels} to the score-replay Edge Function (Phase 5),
+  // which deterministically re-derives every board from the seed, replays
+  // each level's moves through the same match/cascade/scoring rules as
+  // GameEngine, and returns the authoritative score/time bonus/lives used/
+  // levels reached. The client-computed a.totalScore shown up to this point
+  // is never trusted as-is — only the server's response is.
+  async function submitAttempt() {
+    try {
+      const { data, error } = await window.db.functions.invoke('score-replay', {
+        body: { seed: a.seed, levels: a.payloadLevels },
+      });
+      if (error) throw error;
+      a.serverResult = data;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Score-replay submission failed:', err);
+      a.serverResult = { valid: false, error: 'Could not reach the server. Score not yet validated.' };
+    }
+    // Only re-render if the summary screen is still what's showing — a fast
+    // player could in principle already be elsewhere, though nothing in the
+    // current flow lets them navigate away from it.
+    if (el('screen-attempt-summary') && !el('screen-attempt-summary').classList.contains('hidden')) {
+      renderSummary();
+    }
   }
 
   // ---- Level completion ----
@@ -308,6 +388,7 @@ const Attempt = (() => {
     a.timeBonusMicros += bankedThisLevel;
     a.totalScore += a.levelScore;
     a.levelsReached++;
+    pushLevelRecord('completed'); // before slotIndex++ — record belongs to the slot just finished
 
     const themeId = a.slotThemeIds[a.slotIndex];
     a.recentThemeIds.push(themeId);
@@ -338,6 +419,7 @@ const Attempt = (() => {
   function finishBonusLevel() {
     a.totalScore += a.levelScore; // bonus score is never subject to the "incomplete = 0" rule
     a.levelsReached++;
+    pushLevelRecord('completed');
     const next = a.slotIndex >= SLOT_LETTERS.length ? finishAttempt : () => prepareLevel({ bonus: false });
 
     showLevelCompleteScreen({
@@ -355,17 +437,7 @@ const Attempt = (() => {
     a.status = 'completed';
     renderSummary();
     window.showScreen('screen-attempt-summary');
-    logPayload();
-  }
-
-  function logPayload() {
-    // Payload Phase 5's Edge Function will eventually consume. Not sent
-    // anywhere yet — see file header.
-    // eslint-disable-next-line no-console
-    console.log('Attempt payload (not yet submitted — Phase 5 pending):', {
-      seed: a.seed,
-      moves: a.moves,
-    });
+    submitAttempt();
   }
 
   // sec:milli:micro digit-clock accumulation, per ARCHITECTURE.md Section 3.3.
@@ -541,12 +613,7 @@ const Attempt = (() => {
     renderBoard();
 
     if (!a.isBonusLevel) a.movesMade++;
-    a.moves.push({
-      slot: a.isBonusLevel ? 'bonus' : SLOT_LETTERS[a.slotIndex],
-      from: [r1, c1],
-      to: [r2, c2],
-      tMs: Math.round(a.levelSeconds * 1000 - msRemaining()),
-    });
+    a.currentLevelMoves.push([r1, c1, r2, c2]);
 
     setTimeout(() => {
       result.firstRoundCleared.forEach((key) => {
@@ -687,10 +754,30 @@ const Attempt = (() => {
   }
 
   function renderSummary() {
-    el('summary-score').textContent = `${Math.round(a.totalScore).toLocaleString()} (not yet server-validated)`;
-    el('summary-time-bonus').textContent = `${formatTimeBonus(a.timeBonusMicros)} (mm:ss:ms:µs)`;
-    el('summary-lives').textContent = livesStatusText();
-    el('summary-levels').textContent = `${a.levelsReached}`;
+    const r = a.serverResult;
+    if (!r) {
+      // Submission still in flight — client-computed figures shown as a
+      // provisional preview only, explicitly labeled as such.
+      el('summary-score').textContent = `${Math.round(a.totalScore).toLocaleString()} (validating…)`;
+      el('summary-time-bonus').textContent = `${formatTimeBonus(a.timeBonusMicros)} (mm:ss:ms:µs, provisional)`;
+      el('summary-lives').textContent = `${livesStatusText()} (provisional)`;
+      el('summary-levels').textContent = `${a.levelsReached} (provisional)`;
+      return;
+    }
+    if (!r.valid) {
+      el('summary-score').textContent = `Not validated — ${r.error || 'unknown error'}`;
+      el('summary-time-bonus').textContent = '—';
+      el('summary-lives').textContent = '—';
+      el('summary-levels').textContent = '—';
+      return;
+    }
+    // Server-authoritative figures — this is what actually counts once
+    // Phase 6/7 wire attempts into persistence and the leaderboard.
+    el('summary-score').textContent = `${Math.round(r.score).toLocaleString()} (server-validated)`;
+    el('summary-time-bonus').textContent = `${formatTimeBonus(r.timeBonusMicros)} (mm:ss:ms:µs)`;
+    el('summary-lives').textContent =
+      `${r.livesUsed}/${STARTING_LIVES} regular` + (r.adLivesUsed > 0 ? ` + ${r.adLivesUsed} ad-life${r.adLivesUsed === 1 ? '' : 's'}` : '');
+    el('summary-levels').textContent = `${r.levelsReached}`;
   }
 
   return {
