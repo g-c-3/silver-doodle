@@ -13,29 +13,33 @@
 // See docs/DECISIONS.md's 2026-09-13 "Visual/interaction pass against
 // screenshots" block for the specifics and reasoning behind each.
 //
-// PHASE 5 (score integrity): the attempt payload — {seed, levels[]}, one
-// record per finished/failed level via pushLevelRecord() — is submitted to
-// the `score-replay` Supabase Edge Function via submitAttempt() at attempt
-// end. The client-computed a.totalScore/timeBonusMicros/etc. shown live
-// during play are NEVER treated as final — the attempt-summary screen shows
-// them only as a "(validating…)" preview until the Edge Function's response
+// PHASE 6 (daily game definitions): startAttempt() calls the `start-attempt`
+// Edge Function, which assigns this player's daily serving order (on their
+// first call of the day) and returns the shared, server-generated 26 slots
+// (theme + fixed board pattern) for whichever of the day's 12 identical game
+// definitions this attempt is. Regular-slot boards come straight from that
+// response (server-authoritative, identical for every player); bonus-round
+// boards aren't pre-stored (no schema slot for them) and are instead derived
+// client-side from the shared gameDefinitionId, which still guarantees every
+// player sees the same bonus board at the same point — see
+// docs/DECISIONS.md's 2026-09-14 Phase 6 entry for the reasoning.
+//
+// PHASE 5 (score integrity): the attempt payload — {attemptId,
+// gameDefinitionId, levels[]}, one record per finished/failed level via
+// pushLevelRecord() — is submitted to the `score-replay` Supabase Edge
+// Function via submitAttempt() at attempt end. The client-computed
+// a.totalScore/timeBonusMicros/etc. shown live during play are NEVER
+// treated as final — the attempt-summary screen shows them only as a
+// "(validating…)" preview until the Edge Function's response
 // (a.serverResult) arrives, then switches to the server-authoritative
 // figures. See docs/ARCHITECTURE.md Section 5 and server/functions/
 // score-replay/index.ts for the payload contract and replay logic.
 //
-// KNOWN GAP: the Edge Function currently only computes and returns the
-// authoritative result — it does not yet persist a row to `attempts`, since
-// that table's game_definition_id is a NOT NULL FK into
-// `daily_game_definitions`, which Phase 6 (not yet built) is what actually
-// populates. Persistence, slot-cap enforcement, and score_day attribution
-// are wired once Phase 6/7/8 land.
-//
-// KNOWN GAP: docs/ARCHITECTURE.md Section 4 describes the daily game
-// definitions (12/day, identical for every player, server-generated) as a
-// Phase 6 deliverable. Phase 6 doesn't exist yet, so this file generates its
-// own attempt seed and theme shuffle client-side purely so the game is
-// playable/testable now. Swap `startAttempt()`'s seed/theme-shuffle source
-// for the real daily definition + player order once Phase 6 lands.
+// KNOWN GAP: score-replay/index.ts has not yet been updated to accept this
+// new attemptId/gameDefinitionId payload shape or to fetch stored board data
+// — it still expects the old {seed, levels} shape from before Phase 6. This
+// is the very next thing to fix; attempt.js's half of the wiring is done,
+// score-replay's half isn't yet. See docs/SESSIONS.md's latest entry.
 
 const Attempt = (() => {
   const SLOT_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
@@ -108,13 +112,6 @@ const Attempt = (() => {
     return out;
   }
 
-  function newAttemptSeed() {
-    // Dev-only seed source — see file header. Phase 6 will supply the real
-    // daily seed/definition instead of this.
-    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
-    return 'seed-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  }
-
   // A distinct accent hue per theme, spread evenly around the color wheel —
   // 26 hand-picked colors would work too, but this guarantees even, visibly
   // distinct spacing without hand-tuning, and costs nothing to extend if
@@ -136,14 +133,35 @@ const Attempt = (() => {
 
   // ---- Attempt lifecycle ----
 
-  function startAttempt() {
-    const seed = newAttemptSeed();
-    const shuffleRng = GameEngine.makeRng(seed + ':theme-shuffle');
-    const slotThemeIds = shuffle(THEMES.map((_, i) => i), shuffleRng);
+  // Calls the Phase 6 start-attempt Edge Function, which assigns this
+  // player's daily serving order (on their first call of the day), works
+  // out which of the day's 12 shared game definitions this attempt is, and
+  // returns its 26 pre-generated slots plus a fresh attempts row id.
+  async function startAttempt() {
+    window.showScreen('screen-loading');
+    let result;
+    try {
+      const { data, error } = await window.db.functions.invoke('start-attempt', { body: {} });
+      if (error) throw error;
+      result = data;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('start-attempt failed:', err);
+      window.alert("Couldn't start a new game — check your connection and try again.");
+      window.showScreen('screen-home');
+      return;
+    }
+
+    // Index by slot_index for O(1) lookup during play.
+    const slots = new Array(SLOT_LETTERS.length);
+    result.slots.forEach((s) => {
+      slots[s.slotIndex] = s;
+    });
 
     a = {
-      seed,
-      slotThemeIds,
+      attemptId: result.attemptId,
+      gameDefinitionId: result.gameDefinitionId,
+      slots, // slots[slotIndex] = { slotIndex, themeIndex, boardPattern }
       slotIndex: 0,
       levelsReached: 0,
       totalScore: 0,
@@ -163,7 +181,7 @@ const Attempt = (() => {
     a.adLifeUsedThisLevel = false;
 
     if (a.isBonusLevel) {
-      const pickRng = GameEngine.makeRng(`${a.seed}:bonus:${a.slotIndex}:pick`);
+      const pickRng = GameEngine.makeRng(`${a.gameDefinitionId}:bonus:${a.slotIndex}:pick`);
       // 2 emoji from each of the last 3 completed themes — a visible mix,
       // not an arbitrary pool, per the uploaded prototype.
       a.levelEmojis = a.recentThemeIds.flatMap((id) =>
@@ -175,7 +193,7 @@ const Attempt = (() => {
       a.levelIcon = '🎁';
       setThemeAccent('var(--gold)');
     } else {
-      const themeId = a.slotThemeIds[a.slotIndex];
+      const themeId = a.slots[a.slotIndex].themeIndex;
       a.levelEmojis = THEMES[themeId].emojis;
       a.levelThemeName = THEMES[themeId].name;
       a.levelMovesTarget = SLOT_MOVE_TARGETS[a.slotIndex];
@@ -189,9 +207,24 @@ const Attempt = (() => {
   }
 
   function beginLevel() {
-    const boardRng = GameEngine.makeRng(`${a.seed}:${a.isBonusLevel ? 'bonus' : 'slot'}:${a.slotIndex}:board`);
-    a.rng = boardRng;
-    a.board = GameEngine.generatePlayableBoard(boardRng);
+    if (a.isBonusLevel) {
+      // Bonus boards aren't pre-stored (Phase 2 schema has no slot for
+      // them) — derived on the fly, seeded off the shared gameDefinitionId
+      // rather than a per-player seed, so every player who reaches this
+      // bonus point in the same daily game still sees the identical board.
+      // See docs/DECISIONS.md's 2026-09-14 Phase 6 entry for the tradeoff.
+      const boardRng = GameEngine.makeRng(`${a.gameDefinitionId}:bonus:${a.slotIndex}:board`);
+      a.rng = boardRng;
+      a.board = GameEngine.generatePlayableBoard(boardRng);
+    } else {
+      // The 26 regular slots ARE pre-stored (start-attempt handed them over
+      // already) — no generation here, just a defensive copy so this
+      // level's play can't mutate the shared a.slots data. Cascades/refills
+      // still need their own fresh rng stream, seeded distinctly from the
+      // key that produced the (already-fixed) starting layout.
+      a.rng = GameEngine.makeRng(`${a.gameDefinitionId}:slot:${a.slotIndex}:refill`);
+      a.board = a.slots[a.slotIndex].boardPattern.map((row) => row.slice());
+    }
     a.movesMade = 0;
     a.levelScore = 0; // scratch total for this level only — committed to a.totalScore on completion
     a.locked = false;
@@ -353,16 +386,19 @@ const Attempt = (() => {
     });
   }
 
-  // Submits {seed, levels} to the score-replay Edge Function (Phase 5),
-  // which deterministically re-derives every board from the seed, replays
-  // each level's moves through the same match/cascade/scoring rules as
-  // GameEngine, and returns the authoritative score/time bonus/lives used/
-  // levels reached. The client-computed a.totalScore shown up to this point
-  // is never trusted as-is — only the server's response is.
+  // Submits {attemptId, gameDefinitionId, levels} to the score-replay Edge
+  // Function (Phase 5/6), which fetches the day's stored board data for
+  // gameDefinitionId directly from the database (never trusting anything
+  // about the board from the client), replays each level's moves through
+  // the same match/cascade/scoring rules as GameEngine, and returns the
+  // authoritative score/time bonus/lives used/levels reached — also
+  // updating the attemptId row with the final result. The client-computed
+  // a.totalScore shown up to this point is never trusted as-is — only the
+  // server's response is.
   async function submitAttempt() {
     try {
       const { data, error } = await window.db.functions.invoke('score-replay', {
-        body: { seed: a.seed, levels: a.payloadLevels },
+        body: { attemptId: a.attemptId, gameDefinitionId: a.gameDefinitionId, levels: a.payloadLevels },
       });
       if (error) throw error;
       a.serverResult = data;
@@ -390,7 +426,7 @@ const Attempt = (() => {
     a.levelsReached++;
     pushLevelRecord('completed'); // before slotIndex++ — record belongs to the slot just finished
 
-    const themeId = a.slotThemeIds[a.slotIndex];
+    const themeId = a.slots[a.slotIndex].themeIndex;
     a.recentThemeIds.push(themeId);
     if (a.recentThemeIds.length > 3) a.recentThemeIds.shift();
 
