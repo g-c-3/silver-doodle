@@ -324,6 +324,12 @@ const Attempt = (() => {
   }
 
   function offerAdLife() {
+    // Blocks play until the player picks an option below — without this,
+    // the board (still on screen-game underneath this prompt) stayed fully
+    // tappable, letting moves/score keep changing while "out of lives" was
+    // showing. See docs/DECISIONS.md's 2026-09-14 "offerAdLife lock" entry.
+    a.locked = true;
+
     const box = el('game-message');
     box.innerHTML = '';
     const p = document.createElement('p');
@@ -345,6 +351,7 @@ const Attempt = (() => {
       setMessage('');
       showToast(`🎬 Ad watched — +${LIFE_EXTENSION_SECONDS}s`);
       renderHud();
+      a.locked = false; // re-enable play now that the prompt is resolved
       extendTimer(LIFE_EXTENSION_SECONDS);
     });
 
