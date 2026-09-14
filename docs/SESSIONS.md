@@ -4,6 +4,32 @@ Most recent entry first.
 
 ---
 
+**2026-09-14 (fourth entry) — deployment, live debugging, first confirmed end-to-end run**
+
+Continued same-day, walking through actual deployment interactively rather than as an offline coding pass — this entry is mostly what got found and fixed while doing that, not new features.
+
+Deployed all three Edge Functions (`generate-daily-games`, `start-attempt`, `score-replay`) via the Supabase Dashboard's browser editor, and set up `generate-daily-games`'s daily Cron Trigger (`pg_cron` + `pg_net` via SQL Editor, 00:05 IST). Three real bugs surfaced during this, none catchable by the earlier Node-only sanity testing since all three are specific to live infrastructure:
+
+1. All three functions read the legacy `SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_ANON_KEY` env vars, which aren't populated on this project (it uses Supabase's newer `sb_publishable_.../sb_secret_...` key system). Fixed to read `SUPABASE_SECRET_KEYS`/`SUPABASE_PUBLISHABLE_KEYS` instead, per Supabase's current docs.
+2. `service_role` was missing table-level grants on `daily_game_definitions` (`permission denied for table...`) — root cause not fully identified, fixed by explicitly re-running the standard `grant all ... to service_role` statements.
+3. None of the three functions handled CORS — the client's `github.io` origin calling `*.supabase.co` triggers a browser preflight `OPTIONS` request, which all three rejected with 405 (only `POST` was ever handled). Added an `OPTIONS` short-circuit and `Access-Control-Allow-*` headers on every response across all three functions.
+
+All three fixes are recorded in detail in docs/DECISIONS.md's 2026-09-14 "deployment debugging" entry, since each changes how any future Edge Function in this repo should be written from the start (key sourcing, grants, CORS boilerplate), not just how this one deployment happened to need patching.
+
+Also cleaned up: two stale pre-Phase-5 disclaimer lines in `client/src/index.html` ("Score shown in-game is not yet server-validated (Phase 5 pending)" on the home screen, and a near-identical line on the attempt-summary screen) — both now contradicted what `attempt.js`'s own dynamic "(server-validated)"/"(validating…)" labels were correctly showing right next to them. Removed both; the dynamic labels already communicate validation status on their own.
+
+**First confirmed end-to-end run:** signed in on a real device, `start-attempt` correctly served two different real daily game definitions across two separate Play taps (different themes each time — confirms server-side game selection, not a client fallback), played a full attempt through to exhausting all 3 lives plus the ad-life, and the summary screen showed "4,843 (server-validated)" — the actual `score-replay` response, not a client-computed placeholder. This is the first time the whole Phase 4 through 6 stack has been confirmed working together on real infrastructure rather than piece by piece in Node.
+
+New gap found during this playthrough (logged in ROADMAP.md, not fixed here — out of scope for a deployment-debugging session): backgrounding the browser tab mid-attempt and returning to it triggers a full page reload on this device/browser (normal mobile memory-reclaim behavior), which wipes all in-memory attempt state with no recovery — the orphaned `attempts` row is left `status: 'in_progress'` forever. Needs its own design (resume-from-storage, or detect-and-abandon-stale-attempt) before it's picked up.
+
+Bugs fixed: the three deployment bugs above, plus the two stale-copy lines. All confirmed fixed via the successful live playthrough, not just reasoned about.
+
+Decisions made: see docs/DECISIONS.md's 2026-09-14 "deployment debugging" entry.
+
+**Next session start point:** Phase 7 — leaderboards. The orphaned-in-progress-attempt gap above is worth deciding on before or alongside Phase 8 (slot-cap enforcement), since both touch what counts as a "real" attempt for capping/scoring purposes.
+
+---
+
 **2026-09-14 (third entry) — Phase 5/6 wiring: client, score-replay, persistence**
 
 Continued same-day directly from the Phase 6 server-pieces session, picking up its own stated next-step rather than waiting for a session boundary.
