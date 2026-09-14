@@ -1,35 +1,47 @@
-// Match Emojis Daily — score-replay Edge Function (Phase 5)
+// Match Emojis Daily — score-replay Edge Function (Phase 5, updated Phase 6)
 //
-// Accepts { seed, levels[] } (see client/src/js/attempt.js's pushLevelRecord/
-// submitAttempt for the exact producer) and deterministically re-derives the
-// authoritative score, time bonus, lives used, and levels reached. The client
-// never sends a raw score — only a seed and the ordered list of swaps it made
-// per level — per docs/ARCHITECTURE.md Section 5 and the standing score-
-// integrity rule in docs/DECISIONS.md.
+// Accepts { attemptId, levels[] } (see client/src/js/attempt.js's
+// pushLevelRecord/submitAttempt for the exact producer) and deterministically
+// re-derives the authoritative score, time bonus, lives used, and levels
+// reached. The client never sends a raw score — only the ordered list of
+// swaps it made per level — per docs/ARCHITECTURE.md Section 5 and the
+// standing score-integrity rule in docs/DECISIONS.md.
 //
-// KNOWN GAP: this function computes and returns the authoritative result but
-// does NOT persist a row to `attempts` yet. `attempts.game_definition_id` is
-// a NOT NULL FK into `daily_game_definitions`, which Phase 6 (daily game-
-// definition generation) is what actually populates — that table has zero
-// rows right now. Wiring persistence, slot-cap enforcement (Phase 8), and
-// score_day attribution (Section 8) all follow once Phase 6/7/8 land. Until
-// then this is a pure compute-and-return validation step, callable safely
-// with no side effects.
+// PHASE 6 UPDATE: regular-slot (A-Z) starting boards are no longer derived
+// from a client-supplied seed — they're fetched directly from
+// daily_game_definition_slots using the game_definition_id read off the
+// `attempts` row itself (NOT from the request body), so a tampered client
+// can't point replay at an easier game definition than the one
+// start-attempt actually assigned. Bonus-round boards still aren't
+// pre-stored (no schema slot for them) and are derived deterministically
+// from the shared game_definition_id — identical for every player who
+// reaches that bonus point in the same daily game, without needing storage.
+// See docs/DECISIONS.md's 2026-09-14 Phase 6 entry.
+//
+// PHASE 6 UPDATE: this function now persists its result — on a valid
+// replay, it UPDATEs the `attempts` row (status, completed_at, score,
+// time_bonus_micros, lives_used, levels_reached, and a same-day score_day
+// as a placeholder — real score_day attribution edge cases are Phase 8).
+// Auth is required (the caller's JWT) specifically to verify attemptId
+// belongs to the calling user before anything is read or written.
 //
 // KNOWN, DELIBERATE TRUST BOUNDARY: match/cascade scoring is fully replayed
 // and is NOT client-trusted in any way — every point comes from re-running
-// the same deterministic logic as GameEngine against the submitted seed and
-// move list. Per-level *timing* (elapsedMsAtEnd, which drives time bonus) is
-// still client-reported, since there's no live per-move round-trip to the
-// server during play (that's the whole point of the batched-payload design —
-// see DECISIONS.md's "Score integrity model" entry on invocation-volume
-// cost). This function bounds elapsedMsAtEnd to each level's own fixed
-// budget (60s/30s + 60s per life/ad-life actually used, both of which ARE
-// independently checked against the shared 3-life pool and the "ad life
-// only after the pool is spent" rule) so a modified client can only ever
-// shift a fixed, small time-bonus figure within its own level's budget — it
-// can never fabricate points, extra lives, extra levels, or an inflated
-// move count, which is what actually matters for score and rank.
+// the same deterministic logic as GameEngine against server-authoritative
+// board data and the submitted move list. Per-level *timing*
+// (elapsedMsAtEnd, which drives time bonus) is still client-reported, since
+// there's no live per-move round-trip to the server during play (that's the
+// whole point of the batched-payload design — see DECISIONS.md's "Score
+// integrity model" entry on invocation-volume cost). This function bounds
+// elapsedMsAtEnd to each level's own fixed budget (60s/30s + 60s per
+// life/ad-life actually used, both of which ARE independently checked
+// against the shared 3-life pool and the "ad life only after the pool is
+// spent" rule) so a modified client can only ever shift a fixed, small
+// time-bonus figure within its own level's budget — it can never fabricate
+// points, extra lives, extra levels, or an inflated move count, which is
+// what actually matters for score and rank.
+
+import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 // ---- Game engine (ported 1:1 from client/src/js/game-engine.js) ----
 // Kept as a straight port rather than a shared module so this function has
@@ -342,8 +354,14 @@ function fail(error: string): ReplayResult {
   return { valid: false, error };
 }
 
-function replayAttempt(seed: string, levels: LevelPayload[]): ReplayResult {
-  if (typeof seed !== 'string' || seed.length === 0) return fail('Missing or invalid seed.');
+// boardsBySlotIndex holds the 26 pre-stored, server-authoritative regular-
+// slot boards (fetched from daily_game_definition_slots by the caller) —
+// this function never generates a regular level's board itself, only
+// bonus-round boards (which aren't pre-stored, see file header).
+function replayAttempt(gameDefinitionId: string, boardsBySlotIndex: Map<number, Board>, levels: LevelPayload[]): ReplayResult {
+  if (typeof gameDefinitionId !== 'string' || gameDefinitionId.length === 0) {
+    return fail('Missing or invalid gameDefinitionId.');
+  }
   if (!Array.isArray(levels) || levels.length === 0) return fail('Missing or empty levels array.');
   if (levels.length > SLOT_LETTERS.length + Math.ceil(SLOT_LETTERS.length / 3) + 1) {
     return fail('Levels array longer than an attempt could ever produce.');
@@ -380,12 +398,26 @@ function replayAttempt(seed: string, levels: LevelPayload[]): ReplayResult {
       return fail(`Level ${i}: ad-life used before the regular life pool was exhausted.`);
     }
 
-    // Board seed key must match client/src/js/attempt.js's beginLevel()
-    // exactly, including that a bonus board's key reuses the *current*
-    // slotIndex (the slot about to be played next, already incremented past
-    // whichever regular slot triggered the bonus).
-    const boardRng = makeRng(`${seed}:${lvl.isBonus ? 'bonus' : 'slot'}:${slotIndex}:board`);
-    const board = generatePlayableBoard(boardRng);
+    // Starting board + rng source must match client/src/js/attempt.js's
+    // beginLevel() exactly. Regular slots: the pre-stored board fetched by
+    // the caller, with a *separate* refill-only rng stream (the board
+    // itself consumed no rng here, since it was never generated — it's
+    // stored data). Bonus levels: not pre-stored, generated on the fly from
+    // a key that reuses the *current* slotIndex (the slot about to be
+    // played next, already incremented past whichever regular slot
+    // triggered the bonus) — one combined rng stream for gen + refill, same
+    // as before Phase 6.
+    let board: Board;
+    let rng: () => number;
+    if (lvl.isBonus) {
+      rng = makeRng(`${gameDefinitionId}:bonus:${slotIndex}:board`);
+      board = generatePlayableBoard(rng);
+    } else {
+      const stored = boardsBySlotIndex.get(slotIndex);
+      if (!stored) return fail(`Level ${i}: no stored board for slot index ${slotIndex} — data integrity issue.`);
+      board = stored;
+      rng = makeRng(`${gameDefinitionId}:slot:${slotIndex}:refill`);
+    }
 
     let levelScore = 0;
     let workingBoard = board;
@@ -394,7 +426,7 @@ function replayAttempt(seed: string, levels: LevelPayload[]): ReplayResult {
         return fail(`Level ${i}: malformed move entry.`);
       }
       const [r1, c1, r2, c2] = mv;
-      const result = trySwap(workingBoard, r1, c1, r2, c2, boardRng);
+      const result = trySwap(workingBoard, r1, c1, r2, c2, rng);
       if (!result.valid) {
         return fail(`Level ${i}: submitted move (${r1},${c1})->(${r2},${c2}) is not a legal match-producing swap.`);
       }
@@ -452,6 +484,17 @@ function replayAttempt(seed: string, levels: LevelPayload[]): ReplayResult {
   };
 }
 
+function istDateString(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const get = (type: string) => parts.find((p) => p.type === type)!.value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
 // ---- HTTP handler ----
 
 Deno.serve(async (req: Request) => {
@@ -462,7 +505,12 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  let body: { seed?: string; levels?: LevelPayload[] };
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader) {
+    return new Response(JSON.stringify(fail('Missing Authorization header.')), { status: 401 });
+  }
+
+  let body: { attemptId?: string; gameDefinitionId?: string; levels?: LevelPayload[] };
   try {
     body = await req.json();
   } catch {
@@ -471,9 +519,85 @@ Deno.serve(async (req: Request) => {
       headers: { 'Content-Type': 'application/json' },
     });
   }
+  if (typeof body.attemptId !== 'string' || body.attemptId.length === 0) {
+    return new Response(JSON.stringify(fail('Missing attemptId.')), { status: 400 });
+  }
 
-  const result = replayAttempt(body.seed ?? '', body.levels ?? []);
-  return new Response(JSON.stringify(result), {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+  const callerClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } } });
+  const {
+    data: { user },
+    error: userErr,
+  } = await callerClient.auth.getUser();
+  if (userErr || !user) {
+    return new Response(JSON.stringify(fail('Not authenticated.')), { status: 401 });
+  }
+
+  const admin = createClient(supabaseUrl, serviceRoleKey);
+
+  // The attempt's game_definition_id is read from the `attempts` row itself
+  // — NOT trusted from body.gameDefinitionId — so a tampered client can't
+  // point replay at an easier game definition than the one start-attempt
+  // actually assigned it. This also confirms attemptId belongs to the
+  // calling user before anything else happens.
+  const attemptRow = await admin.from('attempts').select('id, user_id, game_definition_id, status').eq('id', body.attemptId).maybeSingle();
+  if (!attemptRow.data) {
+    return new Response(JSON.stringify(fail('Unknown attemptId.')), { status: 404 });
+  }
+  if (attemptRow.data.user_id !== user.id) {
+    return new Response(JSON.stringify(fail('This attempt does not belong to the authenticated user.')), { status: 403 });
+  }
+  if (attemptRow.data.status === 'completed') {
+    return new Response(JSON.stringify(fail('This attempt has already been submitted and validated.')), { status: 409 });
+  }
+  const gameDefinitionId = attemptRow.data.game_definition_id as string;
+
+  const slotsResult = await admin
+    .from('daily_game_definition_slots')
+    .select('slot_index, board_pattern')
+    .eq('game_definition_id', gameDefinitionId);
+  if (slotsResult.error || !slotsResult.data || slotsResult.data.length !== 26) {
+    return new Response(JSON.stringify(fail('Could not load this game definition\'s stored boards — data integrity issue.')), { status: 500 });
+  }
+  const boardsBySlotIndex = new Map<number, Board>();
+  slotsResult.data.forEach((row) => boardsBySlotIndex.set(row.slot_index, row.board_pattern as Board));
+
+  const result = replayAttempt(gameDefinitionId, boardsBySlotIndex, body.levels ?? []);
+
+  if (result.valid) {
+    // Persistence (closes the Phase 5 "not yet done" gap now that Phase 6
+    // supplies a real game_definition_id). score_day is set to today's IST
+    // date as a straightforward default — real score_day attribution
+    // (Section 8: e.g. an attempt started just before midnight, or a late
+    // submission) is still a Phase 8 concern, not handled specially here.
+    const update = await admin
+      .from('attempts')
+      .update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+        score_day: istDateString(),
+        score: result.score,
+        time_bonus_micros: result.timeBonusMicros,
+        lives_used: result.livesUsed,
+        levels_reached: result.levelsReached,
+      })
+      .eq('id', body.attemptId);
+    if (update.error) {
+      // The replay itself succeeded and is correct — only the write failed.
+      // Surface this distinctly rather than as a validation failure, since
+      // the client's displayed score IS the correct one; it just may not be
+      // persisted. A future retry/reconciliation job is Phase 7/8 territory.
+      return new Response(
+        JSON.stringify({ ...result, persisted: false, persistError: update.error.message }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  return new Response(JSON.stringify({ ...result, persisted: result.valid }), {
     status: result.valid ? 200 : 400,
     headers: { 'Content-Type': 'application/json' },
   });
