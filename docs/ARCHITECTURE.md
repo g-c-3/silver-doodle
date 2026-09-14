@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-14 (Phase 6 daily game-definition generation).
+Last updated: 2026-09-14 (Phase 5/6 fully wired — client, score-replay, persistence).
 
 ## 1. Stack
 
@@ -132,7 +132,7 @@ These values are not derivable from Section 3.1's scoring/move-target spec alone
 - **Bonus rounds:** a flat 30-second timer, no move cap at all, and no life risk — the timer simply ends the round and whatever was scored stands. Bonus levels count toward `levels_reached` but their score is never subject to the "incomplete = 0" rule regular slots use. The piece mix is deterministic: 2 emoji drawn from each of the 3 most recently completed slot themes.
 - **Ad count:** both the ad-life grant and the bonus-round entry gate are single-ad, per the existing 2026-09-11 "Ad cadence" decision — the uploaded prototype simulates 2 ads per gate, but is judged to predate that decision rather than supersede it.
 
-Implemented in `client/src/js/game-engine.js` (pure match/cascade/scoring logic) and `client/src/js/attempt.js` (state machine, rendering, input). Both files currently stub two later-phase dependencies rather than blocking on them: the daily game-definition seed/theme-shuffle is generated client-side pending Phase 6, and the ad-life/bonus-ad gates grant immediately with no real AdMob flow pending Phase 10. Score submission to the Phase 5 `score-replay` Edge Function is wired (`attempt.js`'s `submitAttempt()`) — the attempt-summary screen shows the client-computed figures only as a brief "(validating…)" preview, then switches to the server-authoritative response. See Section 5 for the payload contract and the function's current deployment/persistence gaps.
+Implemented in `client/src/js/game-engine.js` (pure match/cascade/scoring logic) and `client/src/js/attempt.js` (state machine, rendering, input). Regular-slot boards and theme assignment now come from the server (`start-attempt`, Section 4) rather than being client-generated. One later-phase dependency remains stubbed: the ad-life/bonus-ad gates grant immediately with no real AdMob flow pending Phase 10. Score submission to the `score-replay` Edge Function is wired (`attempt.js`'s `submitAttempt()`) and, as of Phase 6, so is server-side persistence — the attempt-summary screen shows the client-computed figures only as a brief "(validating…)" preview, then switches to the server-authoritative response. See Section 5 for the payload contract and the function's current deployment gap.
 
 ## 4. Daily Game Generation & Fairness Model
 
@@ -144,18 +144,18 @@ What is individually randomized per player is the **order** the 12 games are ser
 
 - `server/functions/generate-daily-games/index.ts` — service-role, idempotent, meant to run once daily via a Supabase Cron Trigger. For a given IST calendar date, generates all 12 definitions: a 0-25 theme-to-slot shuffle (stored in `daily_game_definition_slots.theme_id` as 1-26, per that column's existing check constraint — the +1/-1 conversion happens only at this function's DB boundary and `start-attempt`'s response, nowhere else) and a fixed 8x8 `board_pattern` (jsonb) per slot, generated once with the same seeded-RNG board-gen algorithm as `game-engine.js`/`score-replay` and stored as a fully-materialized grid rather than just a seed — see docs/DECISIONS.md for why. Idempotent by checking for existing rows for the date before writing anything, so a cron misfire or manual retry can't double-generate or corrupt a day already served.
 - `server/functions/start-attempt/index.ts` — user-authenticated. Assigns a player's random 0-11 serving-order permutation on their first call of a given IST day (`player_daily_order`, seeded off `${gameDate}:${userId}:order` — safe since order carries no fairness stakes between players, see DECISIONS.md), works out which attempt-of-the-day the call represents (a plain count of that player's `attempts` rows already started today — not yet cap-enforced, see Section 3.9/Phase 8), maps it through the permutation to a `game_index`, fetches that definition's 26 slots, inserts a new `attempts` row, and returns `{attemptId, gameDefinitionId, attemptNumberToday, slots: [{slotIndex, themeIndex, boardPattern}]}`.
-
-**Not yet wired:** `client/src/js/attempt.js` still generates its own client-side seed/theme-shuffle (the original Phase 4 stub) instead of calling `start-attempt`, and `server/functions/score-replay/index.ts` still regenerates boards from that client-supplied seed instead of consuming a stored `board_pattern`. Both are the natural next task — see docs/SESSIONS.md's latest entry.
+- `client/src/js/attempt.js`'s `startAttempt()` calls `start-attempt` and uses its response directly: regular-slot boards come straight from `slots[slotIndex].boardPattern`, themes from `slots[slotIndex].themeIndex`. Bonus-round boards have no stored slot in the Phase 2 schema and are instead derived client-side, seeded off the shared `gameDefinitionId` (`${gameDefinitionId}:bonus:${slotIndex}:board`) rather than a per-player seed — still identical for every player who reaches that bonus point in the same daily game, without needing storage. See docs/DECISIONS.md for why a bonus-board table was considered and skipped.
 
 ## 5. Score Integrity Model
 
-The client never sends a raw score. Each attempt submits one batched payload to a single Supabase Edge Function call (`server/functions/score-replay`) at attempt completion. The function deterministically replays the run server-side (board seed, matches, cascades) and computes the authoritative score, time bonus, lives used, and levels reached. This is a single call per attempt (not per level), which is both the anti-cheat model and the basis of the Supabase cost model in DECISIONS.md — roughly 12 Edge Function calls per player per day at 12 attempts/day, rather than ~96 under a per-level-call design.
+The client never sends a raw score. Each attempt submits one batched payload to a single Supabase Edge Function call (`server/functions/score-replay`) at attempt completion. The function deterministically replays the run server-side (server-stored boards, matches, cascades) and computes the authoritative score, time bonus, lives used, and levels reached. This is a single call per attempt (not per level), which is both the anti-cheat model and the basis of the Supabase cost model in DECISIONS.md — roughly 12 Edge Function calls per player per day at 12 attempts/day, rather than ~96 under a per-level-call design.
 
-**Payload contract (finalized Phase 5, 2026-09-14 — supersedes the earlier indicative `{seed, moves[]}` sketch. NOTE: this contract predates Phase 6 and still reflects the client-generated-seed model; once `attempt.js`/`score-replay` are updated to consume Phase 6's stored `board_pattern` data, the `seed` field here is expected to be replaced or supplemented by `gameDefinitionId` — not yet done, see Section 4):**
+**Payload contract (finalized Phase 5, updated Phase 6, 2026-09-14):**
 
 ```
 {
-  seed: string,
+  attemptId: string,          // the `attempts` row start-attempt created; server reads game_definition_id from THIS row, never trusts a client-supplied one
+  gameDefinitionId: string,   // sent for logging/debugging only — not authoritative, see above
   levels: [
     {
       slot: "A".."Z" | "bonus",
@@ -170,15 +170,17 @@ The client never sends a raw score. Each attempt submits one batched payload to 
 }
 ```
 
-One record per level actually played (finished or, for at most the final entry, failed) — not a flat move log — so the server never has to reconstruct which moves/lives/timing belonged to which level after the fact. See docs/DECISIONS.md's 2026-09-14 "Phase 5 score-replay Edge Function" block for why the original flat-log sketch was replaced.
+One record per level actually played (finished or, for at most the final entry, failed) — not a flat move log — so the server never has to reconstruct which moves/lives/timing belonged to which level after the fact. See docs/DECISIONS.md's 2026-09-14 "Phase 5 score-replay Edge Function" block for why the original flat-log sketch was replaced, and the same day's later "Phase 5/6 wiring" block for why `seed` was replaced by `attemptId`/`gameDefinitionId`.
 
-**Response contract:** `{ valid: true, score, timeBonusMicros, livesUsed, adLivesUsed, levelsReached, status: "completed" }` on success, or `{ valid: false, error }` (HTTP 400) if any level's data fails validation (illegal move, life-pool overclaim, wrong move count for a claimed completion, elapsed time outside that level's own budget, etc).
+**Response contract:** `{ valid: true, score, timeBonusMicros, livesUsed, adLivesUsed, levelsReached, status: "completed", persisted: true }` on success, or `{ valid: false, error }` (HTTP 400) if any level's data fails validation (illegal move, life-pool overclaim, wrong move count for a claimed completion, elapsed time outside that level's own budget, board mismatch, etc). `persisted: false` (with `persistError`) is possible alongside a `valid: true` result if the replay succeeded but the database write failed — see DECISIONS.md.
 
-**Trust boundary, by design:** match/cascade scoring is fully replayed and never client-trusted — every point is recomputed from the seed and the submitted move list, with illegal moves rejected outright. Per-level elapsed time (which drives time bonus) remains client-reported, since the batched single-call design has no per-move server round-trip to measure it independently; the function instead bounds `elapsedMsAtEnd` to each level's own fixed time budget (60s/30s base + 60s per life/ad-life actually used, cross-checked against the shared 3-life pool). This limits a modified client to shifting a small time-bonus figure within one level's own budget — it cannot fabricate points, extra lives, extra levels, or an inflated move count.
+**Trust boundary, by design:** match/cascade scoring is fully replayed and never client-trusted — every point is recomputed from server-authoritative board data (fetched from `daily_game_definition_slots` for regular slots; derived from the shared `gameDefinitionId` for bonus rounds) and the submitted move list, with illegal moves and mismatched boards rejected outright. Per-level elapsed time (which drives time bonus) remains client-reported, since the batched single-call design has no per-move server round-trip to measure it independently; the function instead bounds `elapsedMsAtEnd` to each level's own fixed time budget (60s/30s base + 60s per life/ad-life actually used, cross-checked against the shared 3-life pool). This limits a modified client to shifting a small time-bonus figure within one level's own budget — it cannot fabricate points, extra lives, extra levels, or an inflated move count.
 
-**Not yet wired (deferred to later phases):** the function currently computes and returns a result but does not persist a row to `attempts` (Section 6's `game_definition_id` FK has nothing to point at until Phase 6 generates `daily_game_definitions` rows), is not yet deployed to the live Supabase project (Phase 11 builds `deploy-functions.yml`), and slot-cap/score_day attribution (Section 8) aren't enforced here (Phase 7/8).
+**Persistence:** on a valid replay, the function UPDATEs the `attempts` row identified by `attemptId` — `status`, `completed_at`, `score`, `time_bonus_micros`, `lives_used`, `levels_reached`, and a same-day `score_day` (a placeholder — real Section 8 score_day edge-case handling isn't designed yet).
 
-Ad-life grants and bonus-round entries are verified server-side via AdMob SSV callbacks, never trusted from a client-reported "ad watched" flag — this remains a Phase 10 item, unaffected by Phase 5.
+**Not yet wired (deferred to later phases):** not yet deployed to the live Supabase project (Phase 11 builds `deploy-functions.yml`, and `generate-daily-games` additionally needs a one-time manual Supabase Cron Trigger setup), and slot-cap enforcement (Section 3.9/Phase 8) is only a soft guard in `start-attempt` right now.
+
+Ad-life grants and bonus-round entries are verified server-side via AdMob SSV callbacks, never trusted from a client-reported "ad watched" flag — this remains a Phase 10 item, unaffected by Phase 5/6.
 
 ## 6. Data Model (Postgres, Supabase)
 

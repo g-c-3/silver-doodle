@@ -4,6 +4,24 @@ Most recent entry first.
 
 ---
 
+**2026-09-14 (third entry) — Phase 5/6 wiring: client, score-replay, persistence**
+
+Continued same-day directly from the Phase 6 server-pieces session, picking up its own stated next-step rather than waiting for a session boundary.
+
+Modified: `client/src/js/attempt.js` — `startAttempt()` is now async and calls the `start-attempt` Edge Function (showing `screen-loading` while in flight, with an alert + return-to-home fallback on failure), storing the returned `attemptId`/`gameDefinitionId`/`slots`. `beginLevel()` now takes regular-slot boards directly from `slots[slotIndex].boardPattern` (a defensive copy) instead of generating them, using a distinct `:refill`-suffixed rng key for post-match cascades. Bonus-round boards (no stored slot for them) are still generated client-side but now seeded off the shared `gameDefinitionId` rather than a per-player seed. Theme assignment now comes from `slots[slotIndex].themeIndex` instead of a client-side shuffle; the now-unused `newAttemptSeed()`/`slotThemeIds` machinery was removed. `submitAttempt()`'s payload changed from `{seed, levels}` to `{attemptId, gameDefinitionId, levels}`.
+
+Modified: `server/functions/score-replay/index.ts` — no longer accepts or trusts a client-supplied seed. Looks up the attempt's `game_definition_id` from the `attempts` row itself (after verifying that row's `user_id` matches the caller's JWT), fetches the 26 stored `board_pattern` rows from `daily_game_definition_slots`, and uses those directly as regular-slot starting boards; bonus boards are re-derived server-side with the same `gameDefinitionId`-seeded formula the client uses. On a valid replay, now UPDATEs the `attempts` row with the final result (closing the persistence gap flagged twice earlier today) — a write failure after a successful replay is surfaced as `persisted: false` rather than a validation failure. Sanity-tested in Node: a simulated client play-through against a stored board using the new `:refill` key validated correctly, a bonus-level replay validated correctly, and a deliberately mismatched board was correctly rejected as an illegal-move failure.
+
+Bugs fixed: none (planned continuation of the previous session's own scoped-out next step, sanity-tested before delivery).
+
+Decisions made: see docs/DECISIONS.md's 2026-09-14 "Phase 5/6 wiring" block — trusting `attempts.game_definition_id` over the request body, keeping bonus boards un-stored/derived (revisited and reconfirmed, not a schema gap), the `:refill` key naming choice, treating a post-replay write failure as distinct from a validation failure, and `score_day` as an explicit placeholder pending real Phase 8 design.
+
+Known gaps, not oversights: neither function is deployed yet (Phase 11 / manual cron setup, unchanged from earlier today); `start-attempt`'s slot-cap check is still a soft guard, not Phase 8's real enforcement; `score_day` attribution is a same-day placeholder, not Phase 8's eventual real logic; this session's testing was Node-only against transpiled logic, not against the live Supabase Edge Runtime or a real device — the full flow (start-attempt -> play -> score-replay -> persisted attempts row) has never actually run end to end on real infrastructure.
+
+**Next session start point:** deploy both Phase 5 functions (`score-replay`, `start-attempt`) and both Phase 6 functions (`generate-daily-games`, `start-attempt` — same function, listed once) to the live Supabase project via the Dashboard's Edge Functions UI (manual, doesn't need Phase 11's CI), set up `generate-daily-games`'s Cron Trigger, manually invoke it once for today's date, then do a real end-to-end device/browser playthrough from a GitHub Pages-hosted client — this is the first point where the whole Phase 4-6 stack can actually be verified together rather than piece by piece in Node. Phase 7 (leaderboards) is the next roadmap item after that's confirmed working.
+
+---
+
 **2026-09-14 (second entry) — Phase 6 daily game-definition generation**
 
 Continued same-day from the Phase 5 session. Built the two Phase 6 server pieces.
