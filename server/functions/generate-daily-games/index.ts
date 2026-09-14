@@ -182,7 +182,15 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  // This project uses the new sb_secret_.../sb_publishable_... key system —
+  // SUPABASE_SECRET_KEYS is a JSON dictionary (see docs/DECISIONS.md's
+  // 2026-09-14 "Edge Function key sourcing" entry for why the legacy
+  // SUPABASE_SERVICE_ROLE_KEY var was dropped instead of just fixed in place).
+  const secretKeys = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}');
+  const serviceRoleKey = secretKeys['default'];
+  if (!serviceRoleKey) {
+    return new Response(JSON.stringify({ ok: false, error: 'SUPABASE_SECRET_KEYS is missing a "default" entry.' }), { status: 500 });
+  }
   const admin = createClient(supabaseUrl, serviceRoleKey);
 
   // Idempotency check — see file header.
