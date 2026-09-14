@@ -204,6 +204,20 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: `Could not start attempt: ${attemptInsert.error?.message}` }), { status: 500, headers: CORS_HEADERS });
   }
 
+  // 5. Roll this attempt into attempts_started on the daily/weekly/all-time
+  // stats rows for TODAY (the start date — see the function's own comment
+  // in the Phase 7 migration for why this is deliberately not score_day).
+  // Best-effort: a failure here doesn't block the player from getting their
+  // game — it only means this one attempt under-counts on the leaderboard's
+  // "attempts played" tier, which self-corrects on their next attempt.
+  const statsResult = await admin.rpc('record_attempt_start', {
+    p_user_id: user.id,
+    p_start_date: gameDate,
+  });
+  if (statsResult.error) {
+    console.error(`record_attempt_start failed for user ${user.id}, ${gameDate}: ${statsResult.error.message}`);
+  }
+
   return new Response(
     JSON.stringify({
       attemptId: attemptInsert.data.id,
