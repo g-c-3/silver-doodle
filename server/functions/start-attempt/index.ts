@@ -32,6 +32,20 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
+// CORS: the client calls these functions from a github.io origin, which is
+// cross-origin from *.supabase.co, so the browser sends an OPTIONS
+// preflight before the real POST. Every response (including error
+// responses) needs these headers, or the browser discards the response
+// before the caller's code ever sees it — see docs/DECISIONS.md's
+// 2026-09-14 "CORS" entry for why this was missing initially and how it
+// was found (405s on OPTIONS in the Invocations log, not a local repro).
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+
 const GAME_COUNT_PER_DAY = 12;
 
 function istDateString(): string {
@@ -65,13 +79,17 @@ function shuffle<T>(arr: T[], rng: () => number): T[] {
 }
 
 Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: CORS_HEADERS });
+  }
+
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'POST only.' }), { status: 405 });
+    return new Response(JSON.stringify({ error: 'POST only.' }), { status: 405, headers: CORS_HEADERS });
   }
 
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
-    return new Response(JSON.stringify({ error: 'Missing Authorization header.' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Missing Authorization header.' }), { status: 401, headers: CORS_HEADERS });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -82,7 +100,7 @@ Deno.serve(async (req: Request) => {
   const anonKey = publishableKeys['default'];
   const serviceRoleKey = secretKeys['default'];
   if (!anonKey || !serviceRoleKey) {
-    return new Response(JSON.stringify({ error: 'SUPABASE_PUBLISHABLE_KEYS/SUPABASE_SECRET_KEYS missing a "default" entry.' }), { status: 500 });
+    return new Response(JSON.stringify({ error: 'SUPABASE_PUBLISHABLE_KEYS/SUPABASE_SECRET_KEYS missing a "default" entry.' }), { status: 500, headers: CORS_HEADERS });
   }
 
   // Caller-scoped client — used only to resolve who's asking (from their own
@@ -95,7 +113,7 @@ Deno.serve(async (req: Request) => {
     error: userErr,
   } = await callerClient.auth.getUser();
   if (userErr || !user) {
-    return new Response(JSON.stringify({ error: 'Not authenticated.' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Not authenticated.' }), { status: 401, headers: CORS_HEADERS });
   }
 
   const admin = createClient(supabaseUrl, serviceRoleKey);
@@ -135,7 +153,7 @@ Deno.serve(async (req: Request) => {
         .eq('game_date', gameDate)
         .maybeSingle();
       if (!reread.data) {
-        return new Response(JSON.stringify({ error: `Could not assign a daily order: ${insertResult.error.message}` }), { status: 500 });
+        return new Response(JSON.stringify({ error: `Could not assign a daily order: ${insertResult.error.message}` }), { status: 500, headers: CORS_HEADERS });
       }
       gameOrder = reread.data.game_order;
     }
@@ -150,12 +168,12 @@ Deno.serve(async (req: Request) => {
     .gte('started_at', startUtc)
     .lte('started_at', endUtc);
   if (countErr) {
-    return new Response(JSON.stringify({ error: `Could not count today's attempts: ${countErr.message}` }), { status: 500 });
+    return new Response(JSON.stringify({ error: `Could not count today's attempts: ${countErr.message}` }), { status: 500, headers: CORS_HEADERS });
   }
   const attemptNumberToday = count ?? 0;
   if (attemptNumberToday >= GAME_COUNT_PER_DAY) {
     // Soft guard, not the real Phase 8 cap — see file header KNOWN GAP.
-    return new Response(JSON.stringify({ error: "All of today's games have already been started." }), { status: 400 });
+    return new Response(JSON.stringify({ error: "All of today's games have already been started." }), { status: 400, headers: CORS_HEADERS });
   }
   const gameIndex = gameOrder[attemptNumberToday];
 
@@ -164,7 +182,7 @@ Deno.serve(async (req: Request) => {
   if (!def.data) {
     return new Response(
       JSON.stringify({ error: `No game definition found for ${gameDate} game_index ${gameIndex} — has generate-daily-games run for today yet?` }),
-      { status: 500 }
+      { status: 500, headers: CORS_HEADERS }
     );
   }
   const slotsResult = await admin
@@ -173,7 +191,7 @@ Deno.serve(async (req: Request) => {
     .eq('game_definition_id', def.data.id)
     .order('slot_index');
   if (slotsResult.error || !slotsResult.data || slotsResult.data.length !== 26) {
-    return new Response(JSON.stringify({ error: 'Game definition is missing slots — data integrity issue, not a client error.' }), { status: 500 });
+    return new Response(JSON.stringify({ error: 'Game definition is missing slots — data integrity issue, not a client error.' }), { status: 500, headers: CORS_HEADERS });
   }
 
   // 4. Start the attempt row.
@@ -183,7 +201,7 @@ Deno.serve(async (req: Request) => {
     .select('id')
     .single();
   if (attemptInsert.error || !attemptInsert.data) {
-    return new Response(JSON.stringify({ error: `Could not start attempt: ${attemptInsert.error?.message}` }), { status: 500 });
+    return new Response(JSON.stringify({ error: `Could not start attempt: ${attemptInsert.error?.message}` }), { status: 500, headers: CORS_HEADERS });
   }
 
   return new Response(
@@ -197,7 +215,7 @@ Deno.serve(async (req: Request) => {
         boardPattern: s.board_pattern,
       })),
     }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
+    { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
   );
 });
 
