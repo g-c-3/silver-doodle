@@ -43,6 +43,20 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
+// CORS: the client calls these functions from a github.io origin, which is
+// cross-origin from *.supabase.co, so the browser sends an OPTIONS
+// preflight before the real POST. Every response (including error
+// responses) needs these headers, or the browser discards the response
+// before the caller's code ever sees it — see docs/DECISIONS.md's
+// 2026-09-14 "CORS" entry for why this was missing initially and how it
+// was found (405s on OPTIONS in the Invocations log, not a local repro).
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+
 // ---- Game engine (ported 1:1 from client/src/js/game-engine.js) ----
 // Kept as a straight port rather than a shared module so this function has
 // no build-time dependency on client/ — Deno Edge Functions deploy each
@@ -498,16 +512,20 @@ function istDateString(): string {
 // ---- HTTP handler ----
 
 Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: CORS_HEADERS });
+  }
+
   if (req.method !== 'POST') {
     return new Response(JSON.stringify(fail('POST only.')), {
       status: 405,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
     });
   }
 
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
-    return new Response(JSON.stringify(fail('Missing Authorization header.')), { status: 401 });
+    return new Response(JSON.stringify(fail('Missing Authorization header.')), { status: 401, headers: CORS_HEADERS });
   }
 
   let body: { attemptId?: string; gameDefinitionId?: string; levels?: LevelPayload[] };
@@ -516,11 +534,11 @@ Deno.serve(async (req: Request) => {
   } catch {
     return new Response(JSON.stringify(fail('Invalid JSON body.')), {
       status: 400,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
     });
   }
   if (typeof body.attemptId !== 'string' || body.attemptId.length === 0) {
-    return new Response(JSON.stringify(fail('Missing attemptId.')), { status: 400 });
+    return new Response(JSON.stringify(fail('Missing attemptId.')), { status: 400, headers: CORS_HEADERS });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -531,7 +549,7 @@ Deno.serve(async (req: Request) => {
   const anonKey = publishableKeys['default'];
   const serviceRoleKey = secretKeys['default'];
   if (!anonKey || !serviceRoleKey) {
-    return new Response(JSON.stringify(fail('SUPABASE_PUBLISHABLE_KEYS/SUPABASE_SECRET_KEYS missing a "default" entry.')), { status: 500 });
+    return new Response(JSON.stringify(fail('SUPABASE_PUBLISHABLE_KEYS/SUPABASE_SECRET_KEYS missing a "default" entry.')), { status: 500, headers: CORS_HEADERS });
   }
 
   const callerClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } } });
@@ -540,7 +558,7 @@ Deno.serve(async (req: Request) => {
     error: userErr,
   } = await callerClient.auth.getUser();
   if (userErr || !user) {
-    return new Response(JSON.stringify(fail('Not authenticated.')), { status: 401 });
+    return new Response(JSON.stringify(fail('Not authenticated.')), { status: 401, headers: CORS_HEADERS });
   }
 
   const admin = createClient(supabaseUrl, serviceRoleKey);
@@ -552,13 +570,13 @@ Deno.serve(async (req: Request) => {
   // calling user before anything else happens.
   const attemptRow = await admin.from('attempts').select('id, user_id, game_definition_id, status').eq('id', body.attemptId).maybeSingle();
   if (!attemptRow.data) {
-    return new Response(JSON.stringify(fail('Unknown attemptId.')), { status: 404 });
+    return new Response(JSON.stringify(fail('Unknown attemptId.')), { status: 404, headers: CORS_HEADERS });
   }
   if (attemptRow.data.user_id !== user.id) {
-    return new Response(JSON.stringify(fail('This attempt does not belong to the authenticated user.')), { status: 403 });
+    return new Response(JSON.stringify(fail('This attempt does not belong to the authenticated user.')), { status: 403, headers: CORS_HEADERS });
   }
   if (attemptRow.data.status === 'completed') {
-    return new Response(JSON.stringify(fail('This attempt has already been submitted and validated.')), { status: 409 });
+    return new Response(JSON.stringify(fail('This attempt has already been submitted and validated.')), { status: 409, headers: CORS_HEADERS });
   }
   const gameDefinitionId = attemptRow.data.game_definition_id as string;
 
@@ -567,7 +585,7 @@ Deno.serve(async (req: Request) => {
     .select('slot_index, board_pattern')
     .eq('game_definition_id', gameDefinitionId);
   if (slotsResult.error || !slotsResult.data || slotsResult.data.length !== 26) {
-    return new Response(JSON.stringify(fail('Could not load this game definition\'s stored boards — data integrity issue.')), { status: 500 });
+    return new Response(JSON.stringify(fail('Could not load this game definition\'s stored boards — data integrity issue.')), { status: 500, headers: CORS_HEADERS });
   }
   const boardsBySlotIndex = new Map<number, Board>();
   slotsResult.data.forEach((row) => boardsBySlotIndex.set(row.slot_index, row.board_pattern as Board));
@@ -599,13 +617,13 @@ Deno.serve(async (req: Request) => {
       // persisted. A future retry/reconciliation job is Phase 7/8 territory.
       return new Response(
         JSON.stringify({ ...result, persisted: false, persistError: update.error.message }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
+        { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
       );
     }
   }
 
   return new Response(JSON.stringify({ ...result, persisted: result.valid }), {
     status: result.valid ? 200 : 400,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   });
 });
