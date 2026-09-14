@@ -598,12 +598,13 @@ Deno.serve(async (req: Request) => {
     // date as a straightforward default — real score_day attribution
     // (Section 8: e.g. an attempt started just before midnight, or a late
     // submission) is still a Phase 8 concern, not handled specially here.
+    const scoreDay = istDateString();
     const update = await admin
       .from('attempts')
       .update({
         status: 'completed',
         completed_at: new Date().toISOString(),
-        score_day: istDateString(),
+        score_day: scoreDay,
         score: result.score,
         time_bonus_micros: result.timeBonusMicros,
         lives_used: result.livesUsed,
@@ -620,9 +621,29 @@ Deno.serve(async (req: Request) => {
         { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
       );
     }
+
+    // Rolls this completed attempt into daily/weekly/all-time leaderboard
+    // stats (Phase 7). Best-effort like the persistError branch above — the
+    // attempts row (the source of truth) is already correctly written; a
+    // failure here only delays this one attempt showing up on the
+    // leaderboard, surfaced distinctly rather than as a validation failure.
+    const statsResult = await admin.rpc('record_attempt_completion', {
+      p_user_id: attemptRow.data.user_id,
+      p_score_day: scoreDay,
+      p_score: result.score,
+      p_time_bonus_micros: result.timeBonusMicros,
+      p_lives_used: result.livesUsed,
+      p_levels_reached: result.levelsReached,
+    });
+    if (statsResult.error) {
+      return new Response(
+        JSON.stringify({ ...result, persisted: true, statsRecorded: false, statsError: statsResult.error.message }),
+        { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
   }
 
-  return new Response(JSON.stringify({ ...result, persisted: result.valid }), {
+  return new Response(JSON.stringify({ ...result, persisted: result.valid, statsRecorded: result.valid }), {
     status: result.valid ? 200 : 400,
     headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   });
