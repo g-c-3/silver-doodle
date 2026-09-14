@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-14 (Phase 5 score-replay Edge Function).
+Last updated: 2026-09-14 (Phase 6 daily game-definition generation).
 
 ## 1. Stack
 
@@ -140,11 +140,18 @@ Once per day, the server generates **12 fixed game definitions**, each pairing a
 
 What is individually randomized per player is the **order** the 12 games are served in — each player gets their own permutation of the 12 game-definition indices, assigned at their first attempt of the day. This prevents scouting another player's upcoming game while guaranteeing everyone plays the same 12 challenges by day's end.
 
+**Implementation (Phase 6, 2026-09-14):**
+
+- `server/functions/generate-daily-games/index.ts` — service-role, idempotent, meant to run once daily via a Supabase Cron Trigger. For a given IST calendar date, generates all 12 definitions: a 0-25 theme-to-slot shuffle (stored in `daily_game_definition_slots.theme_id` as 1-26, per that column's existing check constraint — the +1/-1 conversion happens only at this function's DB boundary and `start-attempt`'s response, nowhere else) and a fixed 8x8 `board_pattern` (jsonb) per slot, generated once with the same seeded-RNG board-gen algorithm as `game-engine.js`/`score-replay` and stored as a fully-materialized grid rather than just a seed — see docs/DECISIONS.md for why. Idempotent by checking for existing rows for the date before writing anything, so a cron misfire or manual retry can't double-generate or corrupt a day already served.
+- `server/functions/start-attempt/index.ts` — user-authenticated. Assigns a player's random 0-11 serving-order permutation on their first call of a given IST day (`player_daily_order`, seeded off `${gameDate}:${userId}:order` — safe since order carries no fairness stakes between players, see DECISIONS.md), works out which attempt-of-the-day the call represents (a plain count of that player's `attempts` rows already started today — not yet cap-enforced, see Section 3.9/Phase 8), maps it through the permutation to a `game_index`, fetches that definition's 26 slots, inserts a new `attempts` row, and returns `{attemptId, gameDefinitionId, attemptNumberToday, slots: [{slotIndex, themeIndex, boardPattern}]}`.
+
+**Not yet wired:** `client/src/js/attempt.js` still generates its own client-side seed/theme-shuffle (the original Phase 4 stub) instead of calling `start-attempt`, and `server/functions/score-replay/index.ts` still regenerates boards from that client-supplied seed instead of consuming a stored `board_pattern`. Both are the natural next task — see docs/SESSIONS.md's latest entry.
+
 ## 5. Score Integrity Model
 
 The client never sends a raw score. Each attempt submits one batched payload to a single Supabase Edge Function call (`server/functions/score-replay`) at attempt completion. The function deterministically replays the run server-side (board seed, matches, cascades) and computes the authoritative score, time bonus, lives used, and levels reached. This is a single call per attempt (not per level), which is both the anti-cheat model and the basis of the Supabase cost model in DECISIONS.md — roughly 12 Edge Function calls per player per day at 12 attempts/day, rather than ~96 under a per-level-call design.
 
-**Payload contract (finalized Phase 5, 2026-09-14 — supersedes the earlier indicative `{seed, moves[]}` sketch):**
+**Payload contract (finalized Phase 5, 2026-09-14 — supersedes the earlier indicative `{seed, moves[]}` sketch. NOTE: this contract predates Phase 6 and still reflects the client-generated-seed model; once `attempt.js`/`score-replay` are updated to consume Phase 6's stored `board_pattern` data, the `seed` field here is expected to be replaced or supplemented by `gameDefinitionId` — not yet done, see Section 4):**
 
 ```
 {

@@ -4,6 +4,24 @@ Most recent entry first.
 
 ---
 
+**2026-09-14 (second entry) — Phase 6 daily game-definition generation**
+
+Continued same-day from the Phase 5 session. Built the two Phase 6 server pieces.
+
+Built: `server/functions/generate-daily-games/index.ts` (new) — service-role, idempotent Edge Function meant to run once daily via a Supabase Cron Trigger. For a given IST date, generates all 12 game definitions: a 0-25 theme shuffle per game (stored as the DB's existing 1-26 `theme_id` convention) and a fixed 8x8 `board_pattern` per slot, generated with the same seeded board-gen algorithm as `game-engine.js`. No-ops if the date already has rows, so a retry or cron misfire can't corrupt an already-served day. Sanity-tested in Node before delivery: deterministic given the same seed, all 312 generated boards (12 games x 26 slots) confirmed playable and match-free, all 12 theme shuffles confirmed as valid 26-length permutations.
+
+Also built: `server/functions/start-attempt/index.ts` (new) — user-authenticated Edge Function. Assigns a player's random 0-11 serving-order permutation on their first call of a day (`player_daily_order`), works out which attempt-of-the-day a call is, maps it through the permutation to a `game_index`, fetches that definition's 26 slots, inserts a new `attempts` row, and returns everything the client needs to play. Sanity-tested the order-permutation logic in Node alongside the generation tests.
+
+Bugs fixed: none (new code, sanity-tested before delivery).
+
+Decisions made: see docs/DECISIONS.md's 2026-09-14 "Phase 6 daily game-definition generation" block — the DB's 1-26/code's 0-25 theme convention and where the conversion lives, storing fully-materialized board grids rather than just seeds, why `generate-daily-games` is idempotent by design, why `start-attempt`'s order assignment is seeded rather than cryptographically random, and why client/score-replay wiring was deliberately left for next session rather than crammed into this one.
+
+Known gaps, not oversights: no CI to deploy either function yet (Phase 11); `generate-daily-games` additionally needs a one-time manual Supabase Cron Trigger setup via the Dashboard (Edge Functions > generate-daily-games > Cron), which this session can't click through remotely; `start-attempt`'s slot-cap check is a soft guard, not Phase 8's real enforcement; `client/src/js/attempt.js` and `server/functions/score-replay/index.ts` are both still running on the Phase 4 client-generated-seed stub and haven't been updated to consume this phase's output yet.
+
+**Next session start point:** wire `attempt.js` to call `start-attempt` at the start of each attempt (replacing its own client-generated seed/theme-shuffle) and consume the returned `slots[].boardPattern` directly as each level's starting board instead of calling `generatePlayableBoard()` locally; then update `score-replay/index.ts` to accept a `gameDefinitionId` (or the slots data) instead of a bare `seed`, and use the stored `board_pattern` as the starting board for replay rather than regenerating it — cascades/refills after the initial board still need their own seeded RNG (e.g. `${gameDefinitionId}:${slotIndex}:refill`) since that part isn't pre-computed. This is a coordinated three-file change (client + score-replay + likely a small ARCHITECTURE.md payload-contract update), best done as its own focused pass rather than split further.
+
+---
+
 **2026-09-14 — Phase 4 manual test confirmed; Phase 5 score-replay Edge Function**
 
 Phase 4's manual device test was confirmed passing. Checked off Phase 4 in ROADMAP.md and proceeded to Phase 5.
