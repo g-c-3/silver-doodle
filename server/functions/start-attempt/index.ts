@@ -75,8 +75,15 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  // New sb_secret_.../sb_publishable_... key system — see
+  // docs/DECISIONS.md's 2026-09-14 "Edge Function key sourcing" entry.
+  const publishableKeys = JSON.parse(Deno.env.get('SUPABASE_PUBLISHABLE_KEYS') ?? '{}');
+  const secretKeys = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}');
+  const anonKey = publishableKeys['default'];
+  const serviceRoleKey = secretKeys['default'];
+  if (!anonKey || !serviceRoleKey) {
+    return new Response(JSON.stringify({ error: 'SUPABASE_PUBLISHABLE_KEYS/SUPABASE_SECRET_KEYS missing a "default" entry.' }), { status: 500 });
+  }
 
   // Caller-scoped client — used only to resolve who's asking (from their own
   // JWT). All actual reads/writes below use the service-role client, since
