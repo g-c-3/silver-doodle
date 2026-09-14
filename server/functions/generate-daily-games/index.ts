@@ -31,6 +31,20 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
+// CORS: the client calls these functions from a github.io origin, which is
+// cross-origin from *.supabase.co, so the browser sends an OPTIONS
+// preflight before the real POST. Every response (including error
+// responses) needs these headers, or the browser discards the response
+// before the caller's code ever sees it — see docs/DECISIONS.md's
+// 2026-09-14 "CORS" entry for why this was missing initially and how it
+// was found (405s on OPTIONS in the Invocations log, not a local repro).
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+
 const BOARD_SIZE = 8;
 const PIECES_PER_BOARD = 6;
 const THEME_COUNT = 26;
@@ -167,8 +181,12 @@ function istDateString(): string {
 }
 
 Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: CORS_HEADERS });
+  }
+
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'POST only.' }), { status: 405 });
+    return new Response(JSON.stringify({ error: 'POST only.' }), { status: 405, headers: CORS_HEADERS });
   }
 
   let gameDate = istDateString();
@@ -189,7 +207,7 @@ Deno.serve(async (req: Request) => {
   const secretKeys = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}');
   const serviceRoleKey = secretKeys['default'];
   if (!serviceRoleKey) {
-    return new Response(JSON.stringify({ ok: false, error: 'SUPABASE_SECRET_KEYS is missing a "default" entry.' }), { status: 500 });
+    return new Response(JSON.stringify({ ok: false, error: 'SUPABASE_SECRET_KEYS is missing a "default" entry.' }), { status: 500, headers: CORS_HEADERS });
   }
   const admin = createClient(supabaseUrl, serviceRoleKey);
 
@@ -201,7 +219,7 @@ Deno.serve(async (req: Request) => {
   if ((existing.count ?? 0) > 0) {
     return new Response(
       JSON.stringify({ ok: true, gameDate, generated: false, note: 'Definitions already exist for this date — no-op.' }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
+      { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );
   }
 
@@ -212,9 +230,7 @@ Deno.serve(async (req: Request) => {
       .select('id')
       .single();
     if (defErr || !def) {
-      return new Response(JSON.stringify({ ok: false, error: `Failed to insert game_index ${gameIndex}: ${defErr?.message}` }), {
-        status: 500,
-      });
+      return new Response(JSON.stringify({ ok: false, error: `Failed to insert game_index ${gameIndex}: ${defErr?.message}` }), { status: 500, headers: CORS_HEADERS });
     }
 
     const themeShuffleRng = makeRng(`${gameDate}:${gameIndex}:theme-shuffle`);
@@ -238,14 +254,12 @@ Deno.serve(async (req: Request) => {
 
     const { error: slotsErr } = await admin.from('daily_game_definition_slots').insert(slotRows);
     if (slotsErr) {
-      return new Response(JSON.stringify({ ok: false, error: `Failed to insert slots for game_index ${gameIndex}: ${slotsErr.message}` }), {
-        status: 500,
-      });
+      return new Response(JSON.stringify({ ok: false, error: `Failed to insert slots for game_index ${gameIndex}: ${slotsErr.message}` }), { status: 500, headers: CORS_HEADERS });
     }
   }
 
   return new Response(JSON.stringify({ ok: true, gameDate, generated: true, gamesCreated: GAME_COUNT_PER_DAY }), {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   });
 });
