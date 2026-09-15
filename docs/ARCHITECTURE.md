@@ -212,6 +212,10 @@ Applied identically across all three scopes — daily, weekly (resets Monday 00:
 
 Each tier is only consulted if every player above it is exactly tied on all prior tiers. The per-player rank-breakdown UI shows which tier decided the player's placement.
 
+**Backend (2026-09-15, Phase 7):** implemented as the `leaderboard` Edge Function, which fetches the whole scope table (`daily_stats`/`weekly_stats`/`all_time_stats`, populated by `record_attempt_start`/`record_attempt_completion` — see Section 8) and sorts it in Deno rather than via a raw SQL `ORDER BY` chain — see that function's own header comment for why. Returns a ranked `top` list plus the caller's own `you` entry (present even when outside `top`) with `decidingTier`/`decidingTierName`.
+
+**Client (2026-09-15, Phase 7):** `client/src/js/leaderboard.js` + a new `#screen-leaderboard` in `index.html`, reachable from Home. Three tabs (Daily/Weekly/All-time) call the Edge Function on tap; a "you" card shows the caller's own rank and, when not #1, which tier decided it (`decidingTierName` rendered directly, e.g. "Decided by: Average lives used (fewer is better)"). The caller's own row is also outlined in the ranked list when it's within the visible `top` N.
+
 ## 8. Attempt Accounting Rules
 
 Slot-cap enforcement and score attribution are deliberately decoupled, each keyed to a different timestamp:
