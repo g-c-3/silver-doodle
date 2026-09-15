@@ -530,6 +530,100 @@ button:disabled {
   100% { opacity: 0; transform: translateY(calc(-50% - 4px)); }
 }
 
+/* ---- Phase 7: leaderboard ---- */
+
+.lb-column {
+  max-width: 420px; /* a little wider than the standard 360px — rank + name + score needs the room */
+}
+
+.lb-tabs {
+  display: flex;
+  gap: 6px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 4px;
+}
+
+.lb-tab {
+  flex: 1;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 8px 6px;
+  border-radius: calc(var(--radius) - 4px);
+}
+
+.lb-tab.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+}
+
+.lb-you-card {
+  background: var(--surface);
+  border: 1px solid var(--accent-2);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.lb-you-rank {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.lb-you-detail {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.lb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.lb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.lb-row.lb-row-self {
+  border: 1px solid var(--accent-2);
+}
+
+.lb-row-rank {
+  width: 28px;
+  flex-shrink: 0;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.lb-row.lb-row-top .lb-row-rank {
+  color: var(--gold);
+}
+
+.lb-row-name {
+  flex: 1;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-row-score {
+  font-weight: 700;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
 /* ---- Phase 4: theme reveal ticket ---- */
 
 .ticket {
