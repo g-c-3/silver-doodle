@@ -220,13 +220,16 @@ document.getElementById('profile-change-email-btn').addEventListener('click', ()
   showScreen('screen-email-change');
 });
 
-document.getElementById('profile-sign-out-btn').addEventListener('click', async () => {
+async function signOutToEmailScreen() {
   await Auth.signOut();
   state.session = null;
   state.profile = null;
   document.getElementById('email-input').value = '';
   showScreen('screen-email');
-});
+}
+
+document.getElementById('profile-sign-out-btn').addEventListener('click', signOutToEmailScreen);
+document.getElementById('home-logout-btn').addEventListener('click', signOutToEmailScreen);
 
 // ---- Email change ----
 
