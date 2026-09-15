@@ -92,12 +92,15 @@ const Attempt = (() => {
   const BONUS_SECONDS = 30;
   const LIFE_EXTENSION_SECONDS = 60;
   const SWIPE_THRESHOLD_PX = 18; // pointer movement below this is treated as a tap, not a swipe
+  const HINT_IDLE_MS = 5000; // no successful move for this long -> highlight all available moves
 
   let a = null; // current attempt state
   let selectedCell = null; // [r,c] or null — used by the tap-tap flow only
   let tickHandle = null;
   let toastHideHandle = null;
   let pendingNext = null; // function to call from the level-complete screen's continue button
+  let hintTimeoutHandle = null;
+  let hintedCells = []; // "r,c" keys currently glowing — re-applied by renderBoard() on every re-render
 
   function el(id) {
     return document.getElementById(id);
@@ -242,6 +245,8 @@ const Attempt = (() => {
     renderBoard();
     renderHud();
     startTimer(a.levelSeconds);
+    clearHints();
+    scheduleHintTimer();
     window.showScreen('screen-game');
   }
 
@@ -274,6 +279,43 @@ const Attempt = (() => {
 
   function msRemaining() {
     return Math.max(0, a.tickTarget - performance.now());
+  }
+
+  // ---- Idle hints ----
+  // Highlights every tile currently part of an available match-producing
+  // swap after HINT_IDLE_MS with no successful move, and leaves it showing
+  // (no re-flicker) until the next successful move — which both clears it
+  // and restarts the countdown from zero. An invalid swap attempt does NOT
+  // count as a successful move, so it doesn't reset this timer, matching
+  // "if there is no successful move" from the request. Only ever scheduled
+  // from beginLevel() (fresh level) and from attemptSwapAt()'s success path
+  // (a completed move) — see those two call sites.
+
+  function scheduleHintTimer() {
+    clearTimeout(hintTimeoutHandle);
+    hintTimeoutHandle = setTimeout(showHints, HINT_IDLE_MS);
+  }
+
+  function clearHints() {
+    clearTimeout(hintTimeoutHandle);
+    hintTimeoutHandle = null;
+    if (hintedCells.length === 0) return;
+    hintedCells.forEach((key) => {
+      const [r, c] = key.split(',').map(Number);
+      const node = cellEl(r, c);
+      if (node) node.classList.remove('hint-glow');
+    });
+    hintedCells = [];
+  }
+
+  function showHints() {
+    if (!a || a.locked) return; // mid-animation or mid-prompt — nothing stable to highlight
+    hintedCells = Array.from(GameEngine.findHintCells(a.board));
+    hintedCells.forEach((key) => {
+      const [r, c] = key.split(',').map(Number);
+      const node = cellEl(r, c);
+      if (node) node.classList.add('hint-glow');
+    });
   }
 
   // Cumulative elapsed ms on THIS level's own clock, since its very first
@@ -365,10 +407,15 @@ const Attempt = (() => {
   }
 
   // Ends the whole attempt immediately — not just the current level. The
-  // level in progress contributes 0 score and 0 time bonus (ARCHITECTURE.md
-  // Section 3.3), since a.levelScore was never committed to a.totalScore.
+  // level in progress still contributes whatever score was earned before
+  // running out of lives (matches the score the HUD was already showing),
+  // but not levelsReached or time bonus — the level itself was never
+  // cleared. See docs/DECISIONS.md's 2026-09-15 entry; this replaces the
+  // prior "incomplete level scores 0" rule from ARCHITECTURE.md Section 3.3.
   function failAttempt() {
     stopTicking();
+    clearHints();
+    a.totalScore += a.levelScore; // last-shown score is preserved, not dropped
     pushLevelRecord('failed');
     a.status = 'completed';
     renderSummary();
@@ -426,6 +473,7 @@ const Attempt = (() => {
 
   function finishRegularLevel() {
     stopTicking();
+    clearHints();
     const leftoverMs = msRemaining();
     const bankedThisLevel = bankedMicros(leftoverMs);
     a.timeBonusMicros += bankedThisLevel;
@@ -460,6 +508,7 @@ const Attempt = (() => {
   }
 
   function finishBonusLevel() {
+    clearHints();
     a.totalScore += a.levelScore; // bonus score is never subject to the "incomplete = 0" rule
     a.levelsReached++;
     pushLevelRecord('completed');
@@ -477,6 +526,7 @@ const Attempt = (() => {
 
   function finishAttempt() {
     stopTicking();
+    clearHints();
     a.status = 'completed';
     renderSummary();
     window.showScreen('screen-attempt-summary');
@@ -672,6 +722,8 @@ const Attempt = (() => {
       renderBoard();
       renderHud();
       a.locked = false;
+      clearHints();
+      scheduleHintTimer();
 
       if (!a.isBonusLevel && a.movesMade >= a.levelMovesTarget) {
         finishRegularLevel();
@@ -726,6 +778,7 @@ const Attempt = (() => {
   function renderBoard() {
     const boardEl = el('game-board');
     boardEl.innerHTML = '';
+    const hintedSet = new Set(hintedCells);
     for (let r = 0; r < GameEngine.BOARD_SIZE; r++) {
       for (let c = 0; c < GameEngine.BOARD_SIZE; c++) {
         const cell = document.createElement('button');
@@ -736,6 +789,9 @@ const Attempt = (() => {
         cell.dataset.c = c;
         if (selectedCell && selectedCell[0] === r && selectedCell[1] === c) {
           cell.classList.add('selected');
+        }
+        if (hintedSet.has(`${r},${c}`)) {
+          cell.classList.add('hint-glow');
         }
         cell.textContent = a.levelEmojis[pieceIndex];
         cell.addEventListener('pointerdown', (e) => onPointerDown(r, c, e));
