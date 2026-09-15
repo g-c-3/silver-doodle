@@ -220,6 +220,36 @@ document.getElementById('profile-change-email-btn').addEventListener('click', ()
   showScreen('screen-email-change');
 });
 
+/**
+ * Themed replacement for the native browser confirm() dialog, which doesn't
+ * match the app's dark UI (shows as a generic system "Message from
+ * g-c-3.github.io" popup). Resolves true/false, same calling shape as
+ * window.confirm() so call sites read the same way.
+ * @param {string} message
+ * @returns {Promise<boolean>}
+ */
+function showConfirm(message) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('confirm-modal');
+    const okBtn = document.getElementById('confirm-modal-ok-btn');
+    const cancelBtn = document.getElementById('confirm-modal-cancel-btn');
+    document.getElementById('confirm-modal-message').textContent = message;
+    modal.classList.remove('hidden');
+
+    function cleanup(result) {
+      modal.classList.add('hidden');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    }
+    function onOk() { cleanup(true); }
+    function onCancel() { cleanup(false); }
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
 async function signOutToEmailScreen() {
   await Auth.signOut();
   state.session = null;
@@ -229,8 +259,9 @@ async function signOutToEmailScreen() {
 }
 
 document.getElementById('profile-sign-out-btn').addEventListener('click', signOutToEmailScreen);
-document.getElementById('home-logout-btn').addEventListener('click', () => {
-  if (window.confirm('Sign out?')) {
+document.getElementById('home-logout-btn').addEventListener('click', async () => {
+  const confirmed = await showConfirm('Sign out?');
+  if (confirmed) {
     signOutToEmailScreen();
   }
 });
