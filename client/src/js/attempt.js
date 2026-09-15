@@ -30,8 +30,8 @@
 // Function via submitAttempt() at attempt end. The client-computed
 // a.totalScore/timeBonusMicros/etc. shown live during play are NEVER
 // treated as final — the attempt-summary screen shows them only as a
-// "(validating…)" preview until the Edge Function's response
-// (a.serverResult) arrives, then switches to the server-authoritative
+// "Score is being saved, please wait..." preview until the Edge Function's
+// response (a.serverResult) arrives, then switches to the server-authoritative
 // figures. See docs/ARCHITECTURE.md Section 5 and server/functions/
 // score-replay/index.ts for the payload contract and replay logic.
 //
@@ -858,7 +858,7 @@ const Attempt = (() => {
     if (!r) {
       // Submission still in flight — client-computed figures shown as a
       // provisional preview only, explicitly labeled as such.
-      el('summary-score').textContent = `${Math.round(a.totalScore).toLocaleString()} (validating…)`;
+      el('summary-score').textContent = `${Math.round(a.totalScore).toLocaleString()} (Score is being saved, please wait...)`;
       el('summary-time-bonus').textContent = `${formatTimeBonus(a.timeBonusMicros)} (mm:ss:ms:µs, provisional)`;
       el('summary-lives').textContent = `${livesStatusText()} (provisional)`;
       el('summary-levels').textContent = `${a.levelsReached} (provisional)`;
@@ -873,7 +873,7 @@ const Attempt = (() => {
     }
     // Server-authoritative figures — this is what actually counts once
     // Phase 6/7 wire attempts into persistence and the leaderboard.
-    el('summary-score').textContent = `${Math.round(r.score).toLocaleString()} (server-validated)`;
+    el('summary-score').textContent = `${Math.round(r.score).toLocaleString()} (Score successfully saved in Game server)`;
     el('summary-time-bonus').textContent = `${formatTimeBonus(r.timeBonusMicros)} (mm:ss:ms:µs)`;
     el('summary-lives').textContent =
       `${r.livesUsed}/${STARTING_LIVES} regular` + (r.adLivesUsed > 0 ? ` + ${r.adLivesUsed} ad-life${r.adLivesUsed === 1 ? '' : 's'}` : '');
