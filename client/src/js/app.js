@@ -17,6 +17,7 @@ const screens = [
   'screen-level-complete',
   'screen-bonus-prompt',
   'screen-attempt-summary',
+  'screen-leaderboard',
   'screen-profile',
   'screen-email-change',
   'screen-check-email-change',
@@ -146,6 +147,22 @@ document.getElementById('home-profile-btn').addEventListener('click', () => {
 
 document.getElementById('home-play-btn').addEventListener('click', () => {
   Attempt.startAttempt();
+});
+
+document.getElementById('home-leaderboard-btn').addEventListener('click', () => {
+  Leaderboard.open();
+});
+
+// ---- Leaderboard ----
+
+document.querySelectorAll('.lb-tab').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    Leaderboard.loadScope(btn.dataset.scope);
+  });
+});
+
+document.getElementById('lb-back-btn').addEventListener('click', () => {
+  showScreen('screen-home');
 });
 
 // ---- Game / bonus / summary ----
