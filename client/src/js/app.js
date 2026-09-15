@@ -18,6 +18,7 @@ const screens = [
   'screen-bonus-prompt',
   'screen-attempt-summary',
   'screen-leaderboard',
+  'screen-attempt-history',
   'screen-profile',
   'screen-email-change',
   'screen-check-email-change',
@@ -153,6 +154,14 @@ document.getElementById('home-leaderboard-btn').addEventListener('click', () => 
   Leaderboard.open();
 });
 
+document.getElementById('home-history-btn').addEventListener('click', () => {
+  AttemptHistory.open(state.session.user.id);
+});
+
+document.getElementById('history-back-btn').addEventListener('click', () => {
+  showScreen('screen-home');
+});
+
 // ---- Leaderboard ----
 
 document.querySelectorAll('.lb-tab').forEach((btn) => {
@@ -220,6 +229,37 @@ document.getElementById('profile-change-email-btn').addEventListener('click', ()
   showScreen('screen-email-change');
 });
 
+const ALERT_ICONS = { info: 'ℹ️', warning: '⏱️', error: '❌', success: '✅' };
+
+/**
+ * Themed replacement for the native browser alert() dialog, which doesn't
+ * match the app's dark UI. `type` picks a colorful icon badge (info/warning/
+ * error/success) rather than a plain system popup. Exposed on window since
+ * attempt.js (a separate script/closure) needs to call this too.
+ * @param {string} message
+ * @param {'info'|'warning'|'error'|'success'} [type='info']
+ * @returns {Promise<void>}
+ */
+function showAlert(message, type = 'info') {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('alert-modal');
+    const okBtn = document.getElementById('alert-modal-ok-btn');
+    const icon = document.getElementById('alert-modal-icon');
+    document.getElementById('alert-modal-message').textContent = message;
+    icon.textContent = ALERT_ICONS[type] || ALERT_ICONS.info;
+    icon.className = `alert-icon-badge ${type}`;
+    modal.classList.remove('hidden');
+
+    function onOk() {
+      modal.classList.add('hidden');
+      okBtn.removeEventListener('click', onOk);
+      resolve();
+    }
+    okBtn.addEventListener('click', onOk);
+  });
+}
+window.showAlert = showAlert;
+
 /**
  * Themed replacement for the native browser confirm() dialog, which doesn't
  * match the app's dark UI (shows as a generic system "Message from
@@ -234,6 +274,7 @@ function showConfirm(message) {
     const okBtn = document.getElementById('confirm-modal-ok-btn');
     const cancelBtn = document.getElementById('confirm-modal-cancel-btn');
     document.getElementById('confirm-modal-message').textContent = message;
+    document.getElementById('confirm-modal-icon').textContent = '🚪';
     modal.classList.remove('hidden');
 
     function cleanup(result) {

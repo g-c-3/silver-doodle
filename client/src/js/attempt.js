@@ -159,7 +159,7 @@ const Attempt = (() => {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('start-attempt failed:', err);
-      window.alert("Couldn't start a new game — check your connection and try again.");
+      await window.showAlert("Couldn't start a new game — check your connection and try again.", 'error');
       window.showScreen('screen-home');
       return;
     }
@@ -358,7 +358,7 @@ const Attempt = (() => {
         stopHeartbeat();
         stopTicking();
         clearHints();
-        window.alert('This attempt timed out from inactivity and was forfeited.');
+        await window.showAlert('This attempt timed out from inactivity and was forfeited.', 'warning');
         window.showScreen('screen-home');
       }
     } catch (err) {
