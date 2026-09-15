@@ -265,12 +265,13 @@ const GameEngine = (() => {
     return false;
   }
 
-  // Like hasLegalMove, but collects every cell involved in ANY available
-  // match-producing swap rather than stopping at the first one found — used
-  // by the idle-hint UI (client/src/js/attempt.js) to highlight the whole
-  // set at once.
-  function findHintCells(board) {
-    const cells = new Set();
+  // Finds ONE currently-available match-producing move and returns the
+  // single "r,c" key of the tile the player should move — not every legal
+  // move on the board (there are usually many, and highlighting all of them
+  // lit up nearly the entire 8x8 grid, which is what this replaces) and not
+  // the resulting match's full run either. Used by the idle-hint UI
+  // (client/src/js/attempt.js), which glows exactly this one tile.
+  function findHintCell(board) {
     for (let r = 0; r < BOARD_SIZE; r++) {
       for (let c = 0; c < BOARD_SIZE; c++) {
         if (c + 1 < BOARD_SIZE) {
@@ -278,24 +279,18 @@ const GameEngine = (() => {
           const t = test[r][c];
           test[r][c] = test[r][c + 1];
           test[r][c + 1] = t;
-          if (findRuns(test).length > 0) {
-            cells.add(cellKey(r, c));
-            cells.add(cellKey(r, c + 1));
-          }
+          if (findRuns(test).length > 0) return cellKey(r, c);
         }
         if (r + 1 < BOARD_SIZE) {
           const test = cloneBoard(board);
           const t = test[r][c];
           test[r][c] = test[r + 1][c];
           test[r + 1][c] = t;
-          if (findRuns(test).length > 0) {
-            cells.add(cellKey(r, c));
-            cells.add(cellKey(r + 1, c));
-          }
+          if (findRuns(test).length > 0) return cellKey(r, c);
         }
       }
     }
-    return cells;
+    return null;
   }
 
   function generatePlayableBoard(rng) {
@@ -348,7 +343,7 @@ const GameEngine = (() => {
     trySwap,
     trySwapDetailed,
     lineScore,
-    findHintCells,
+    findHintCell,
   };
 })();
 

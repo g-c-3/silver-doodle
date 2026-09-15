@@ -282,10 +282,10 @@ const Attempt = (() => {
   }
 
   // ---- Idle hints ----
-  // Highlights every tile currently part of an available match-producing
-  // swap after HINT_IDLE_MS with no successful move, and leaves it showing
-  // (no re-flicker) until the next successful move — which both clears it
-  // and restarts the countdown from zero. An invalid swap attempt does NOT
+  // Highlights ONE tile — the one the player should move — after
+  // HINT_IDLE_MS with no successful move, and leaves it showing (no
+  // re-flicker) until the next successful move, which both clears it and
+  // restarts the countdown from zero. An invalid swap attempt does NOT
   // count as a successful move, so it doesn't reset this timer, matching
   // "if there is no successful move" from the request. Only ever scheduled
   // from beginLevel() (fresh level) and from attemptSwapAt()'s success path
@@ -310,9 +310,10 @@ const Attempt = (() => {
 
   function showHints() {
     if (!a || a.locked) return; // mid-animation or mid-prompt — nothing stable to highlight
-    hintedCells = Array.from(GameEngine.findHintCells(a.board));
-    hintedCells.forEach((key) => {
-      const [r, c] = key.split(',').map(Number);
+    const key = GameEngine.findHintCell(a.board);
+    hintedCells = key ? [key] : [];
+    hintedCells.forEach((k) => {
+      const [r, c] = k.split(',').map(Number);
       const node = cellEl(r, c);
       if (node) node.classList.add('hint-glow');
     });
@@ -753,7 +754,7 @@ const Attempt = (() => {
     t.style.animation = '';
     toastHideHandle = setTimeout(() => {
       t.classList.add('hidden');
-    }, 3000);
+    }, 5000);
   }
 
   function renderReveal() {
