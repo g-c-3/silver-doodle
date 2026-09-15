@@ -460,6 +460,20 @@ button:disabled {
   border-color: var(--danger);
 }
 
+/* Idle-hint highlight — see attempt.js's showHints(). Reuses each tile's
+   own --tile-color (so different pieces glow different colors, matching
+   "colour glow" from the request) but with its own slower, non-scaling
+   pulse so it reads as distinct from .selected's tap-selection cue rather
+   than looking like the player tapped every hinted tile. */
+@keyframes hint-glow-pulse {
+  0%, 100% { box-shadow: 0 0 4px 1px var(--tile-color); }
+  50% { box-shadow: 0 0 14px 5px var(--tile-color); }
+}
+
+.game-cell.hint-glow {
+  animation: hint-glow-pulse 1.1s ease-in-out infinite;
+}
+
 #game-message {
   min-height: 1px;
 }
