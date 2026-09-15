@@ -229,7 +229,11 @@ async function signOutToEmailScreen() {
 }
 
 document.getElementById('profile-sign-out-btn').addEventListener('click', signOutToEmailScreen);
-document.getElementById('home-logout-btn').addEventListener('click', signOutToEmailScreen);
+document.getElementById('home-logout-btn').addEventListener('click', () => {
+  if (window.confirm('Sign out?')) {
+    signOutToEmailScreen();
+  }
+});
 
 // ---- Email change ----
 
