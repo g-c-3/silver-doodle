@@ -479,10 +479,18 @@ function replayAttempt(gameDefinitionId: string, boardsBySlotIndex: Map<number, 
         const leftoverMs = Math.max(0, budgetMs - elapsedMsAtEnd);
         timeBonusMicros += Math.round(leftoverMs * 1000);
       }
+    } else {
+      // 'failed' outcome (only ever the attempt's final, non-bonus level,
+      // enforced above) still contributes whatever score was actually
+      // earned before the player ran out of lives — this matches the
+      // client's live HUD figure at the moment they gave up, rather than
+      // discarding it. No time bonus and no levelsReached credit: the level
+      // itself was never cleared, so there's no leftover time to bank and
+      // it shouldn't count as a reached level. Replaces the prior
+      // "incomplete level scores 0" rule — see docs/DECISIONS.md's
+      // 2026-09-15 entry.
+      totalScore += levelScore;
     }
-    // 'failed' outcome contributes 0 to both score and time bonus, per
-    // ARCHITECTURE.md Section 3.3 — levelScore/leftover time are computed
-    // above only for validation, never added to the running totals.
 
     if (!lvl.isBonus) slotIndex++;
   }
@@ -636,6 +644,7 @@ Deno.serve(async (req: Request) => {
       p_levels_reached: result.levelsReached,
     });
     if (statsResult.error) {
+      console.error(`record_attempt_completion failed for user ${attemptRow.data.user_id}, ${scoreDay}: ${statsResult.error.message}`);
       return new Response(
         JSON.stringify({ ...result, persisted: true, statsRecorded: false, statsError: statsResult.error.message }),
         { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
