@@ -63,6 +63,7 @@ Deno.serve(async (_req: Request) => {
     .select('id');
 
   if (result.error) {
+    console.error(`forfeit-stale-attempts sweep failed: ${result.error.message}`);
     return new Response(JSON.stringify({ error: result.error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 
