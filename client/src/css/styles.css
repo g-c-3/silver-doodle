@@ -217,6 +217,108 @@ button:disabled {
   font-size: 15px;
 }
 
+.alert-icon-badge {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  margin: 0 auto 14px;
+}
+
+.alert-icon-badge.warning {
+  background: rgba(245, 185, 66, 0.15);
+  box-shadow: 0 0 0 1px rgba(245, 185, 66, 0.35);
+}
+
+.alert-icon-badge.error {
+  background: rgba(255, 92, 92, 0.15);
+  box-shadow: 0 0 0 1px rgba(255, 92, 92, 0.35);
+}
+
+.alert-icon-badge.success {
+  background: rgba(52, 211, 153, 0.15);
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.35);
+}
+
+.alert-icon-badge.info {
+  background: rgba(124, 111, 255, 0.15);
+  box-shadow: 0 0 0 1px rgba(124, 111, 255, 0.35);
+}
+
+/* ---- Phase 8: attempt history ---- */
+
+.history-column {
+  max-width: 420px;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.history-row {
+  background: var(--surface);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.history-row-top,
+.history-row-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.history-row-bottom {
+  margin-top: 4px;
+}
+
+.history-row-date {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.history-row-status {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.history-row-status.status-completed {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+}
+
+.history-row-status.status-forfeited {
+  background: rgba(255, 92, 92, 0.15);
+  color: var(--danger);
+}
+
+.history-row-status.status-in_progress {
+  background: rgba(245, 185, 66, 0.15);
+  color: var(--gold);
+}
+
+.history-row-score {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.history-row-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .error {
   color: var(--danger);
   font-size: 13px;
