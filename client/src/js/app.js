@@ -297,11 +297,32 @@ document.getElementById('check-email-change-back-btn').addEventListener('click',
 // confirmation-link session, so this single listener covers both "returning
 // with an existing session" and "just tapped a confirmation link" cases —
 // no separate URL parsing needed.
+//
+// FIXED 2026-09-15: supabase-js re-fires SIGNED_IN (with the same session,
+// not a new login) whenever the browser tab regains focus/visibility — a
+// documented supabase-js behavior, not something this app triggers. This
+// listener used to call routeAfterAuth() — which unconditionally navigates
+// to screen-home — on every SIGNED_IN, silently abandoning an in-progress
+// game every time the player switched browser tabs and came back: the
+// attempt's heartbeat/tick timers were never stopped (that only happens via
+// failAttempt()/finishAttempt(), neither of which this path went through),
+// so they kept running in the background against whatever the module-level
+// `a` got reassigned to next. hasRoutedOnce restricts the actual navigation
+// to the first SIGNED_IN/INITIAL_SESSION of this page load; later re-fires
+// still refresh state.session (needed so API calls keep using a current
+// token) but no longer yank the player away from wherever they are.
+
+let hasRoutedOnce = false;
 
 Auth.onAuthStateChange((event, session) => {
   if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
     if (session) {
-      routeAfterAuth(session);
+      if (!hasRoutedOnce) {
+        hasRoutedOnce = true;
+        routeAfterAuth(session);
+      } else {
+        state.session = session; // keep the token fresh without navigating away
+      }
     } else {
       showScreen('screen-email');
     }
