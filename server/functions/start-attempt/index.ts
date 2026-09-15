@@ -8,27 +8,19 @@
 // On a player's first call of the day: assigns a random permutation of the
 // day's 12 game_index values (0-11) to that player, stored in
 // player_daily_order, and validated as a true permutation by the existing
-// Phase 2 `validate_game_order` trigger. On every call: works out which
-// attempt-of-the-day this is (a plain count of the player's attempts rows
-// already started today — NOT yet cap-enforced; the 12/day slot cap is
-// Phase 8, not this session), maps that count through the player's
-// permutation to get a game_index, fetches that game definition's 26 slots,
-// inserts a new `attempts` row (status in_progress), and returns everything
-// the client needs to play deterministically.
+// Phase 2 `validate_game_order` trigger. On every call: atomically (via the
+// Phase 8 `start_attempt_slot` Postgres function) locks this player+day,
+// works out which attempt-of-the-day this is, enforces the 12/day cap,
+// resolves that to a game_index/game_definition_id, and inserts the new
+// `attempts` row (status in_progress) — all in one transaction, so a
+// concurrent second call can't race past the cap. Then fetches that game
+// definition's 26 slots and returns everything the client needs to play
+// deterministically.
 //
-// KNOWN GAP: no slot-cap enforcement yet — a 13th call in one day would
-// currently throw (array index out of the permutation's 0-11 range) rather
-// than being cleanly rejected with a "come back tomorrow" message. Phase 8
-// is where that becomes a proper, deliberate limit rather than an
-// out-of-bounds error.
-//
-// KNOWN GAP: the `attempts` row inserted here is never updated again — its
-// status stays 'in_progress' and score/time_bonus_micros/etc. stay at their
-// defaults forever, even after the client separately calls score-replay and
-// gets an authoritative result back. Wiring score-replay's result into an
-// UPDATE on this row (plus score_day attribution, Section 8) is Phase 7/8
-// territory, not attempted here — this function's only job is handing out
-// the next game to play.
+// FIXED 2026-09-15 (Phase 8): the cap check used to be a separate
+// count-then-insert (two queries, no lock), which a concurrent second call
+// could race past — see docs/DECISIONS.md's 2026-09-15 "atomic slot cap"
+// entry. Now the whole count/cap-check/insert is one atomic RPC call.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -159,52 +151,47 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // 2. Work out which attempt-of-the-day this is.
+  // 2. Atomically: lock this (user, date), count today's attempts, check
+  // the 12/day cap, resolve which game_index this attempt is, and insert
+  // the attempts row — all inside one Postgres function/transaction, so a
+  // concurrent second call can't race past the cap or double-claim the same
+  // game_index. See supabase/migrations/20260915000000_phase8_atomic_slot_cap.sql.
   const { startUtc, endUtc } = istDayBoundsUtc(gameDate);
-  const { count, error: countErr } = await admin
-    .from('attempts')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', user.id)
-    .gte('started_at', startUtc)
-    .lte('started_at', endUtc);
-  if (countErr) {
-    return new Response(JSON.stringify({ error: `Could not count today's attempts: ${countErr.message}` }), { status: 500, headers: CORS_HEADERS });
+  const slotResult = await admin
+    .rpc('start_attempt_slot', {
+      p_user_id: user.id,
+      p_game_date: gameDate,
+      p_start_bound_utc: startUtc,
+      p_end_bound_utc: endUtc,
+      p_game_count: GAME_COUNT_PER_DAY,
+      p_game_order: gameOrder,
+    })
+    .single();
+  if (slotResult.error) {
+    if (slotResult.error.message.includes('DAILY_CAP_REACHED')) {
+      return new Response(JSON.stringify({ error: "All of today's games have already been started." }), { status: 400, headers: CORS_HEADERS });
+    }
+    if (slotResult.error.message.includes('NO_GAME_DEFINITION')) {
+      return new Response(
+        JSON.stringify({ error: `No game definition found for ${gameDate} — has generate-daily-games run for today yet?` }),
+        { status: 500, headers: CORS_HEADERS }
+      );
+    }
+    return new Response(JSON.stringify({ error: `Could not start attempt: ${slotResult.error.message}` }), { status: 500, headers: CORS_HEADERS });
   }
-  const attemptNumberToday = count ?? 0;
-  if (attemptNumberToday >= GAME_COUNT_PER_DAY) {
-    // Soft guard, not the real Phase 8 cap — see file header KNOWN GAP.
-    return new Response(JSON.stringify({ error: "All of today's games have already been started." }), { status: 400, headers: CORS_HEADERS });
-  }
-  const gameIndex = gameOrder[attemptNumberToday];
+  const { attempt_id: attemptId, attempt_number: attemptNumberToday, game_definition_id: gameDefinitionId } = slotResult.data;
 
   // 3. Fetch that game definition's 26 slots.
-  const def = await admin.from('daily_game_definitions').select('id').eq('game_date', gameDate).eq('game_index', gameIndex).maybeSingle();
-  if (!def.data) {
-    return new Response(
-      JSON.stringify({ error: `No game definition found for ${gameDate} game_index ${gameIndex} — has generate-daily-games run for today yet?` }),
-      { status: 500, headers: CORS_HEADERS }
-    );
-  }
   const slotsResult = await admin
     .from('daily_game_definition_slots')
     .select('slot_index, theme_id, board_pattern')
-    .eq('game_definition_id', def.data.id)
+    .eq('game_definition_id', gameDefinitionId)
     .order('slot_index');
   if (slotsResult.error || !slotsResult.data || slotsResult.data.length !== 26) {
     return new Response(JSON.stringify({ error: 'Game definition is missing slots — data integrity issue, not a client error.' }), { status: 500, headers: CORS_HEADERS });
   }
 
-  // 4. Start the attempt row.
-  const attemptInsert = await admin
-    .from('attempts')
-    .insert({ user_id: user.id, game_definition_id: def.data.id, status: 'in_progress' })
-    .select('id')
-    .single();
-  if (attemptInsert.error || !attemptInsert.data) {
-    return new Response(JSON.stringify({ error: `Could not start attempt: ${attemptInsert.error?.message}` }), { status: 500, headers: CORS_HEADERS });
-  }
-
-  // 5. Roll this attempt into attempts_started on the daily/weekly/all-time
+  // 4. Roll this attempt into attempts_started on the daily/weekly/all-time
   // stats rows for TODAY (the start date — see the function's own comment
   // in the Phase 7 migration for why this is deliberately not score_day).
   // Best-effort: a failure here doesn't block the player from getting their
@@ -220,8 +207,8 @@ Deno.serve(async (req: Request) => {
 
   return new Response(
     JSON.stringify({
-      attemptId: attemptInsert.data.id,
-      gameDefinitionId: def.data.id,
+      attemptId,
+      gameDefinitionId,
       attemptNumberToday, // 0-indexed, useful for client-side "game N of 12" display
       slots: slotsResult.data.map((s) => ({
         slotIndex: s.slot_index,
