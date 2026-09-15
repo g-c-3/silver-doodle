@@ -162,6 +162,12 @@ document.getElementById('history-back-btn').addEventListener('click', () => {
   showScreen('screen-home');
 });
 
+document.querySelectorAll('.history-tab').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    AttemptHistory.switchTab(btn.dataset.tab);
+  });
+});
+
 // ---- Leaderboard ----
 
 document.querySelectorAll('.lb-tab').forEach((btn) => {
