@@ -220,7 +220,7 @@ Each tier is only consulted if every player above it is exactly tied on all prio
 
 Slot-cap enforcement and score attribution are deliberately decoupled, each keyed to a different timestamp:
 
-- **Slot cap (12/day) uses the attempt's start timestamp.** Checked and decremented server-side when a run begins.
+- **Slot cap (12/day) uses the attempt's start timestamp.** Checked and decremented server-side when a run begins, atomically (`start_attempt_slot`, added 2026-09-15) — a Postgres function that advisory-locks per (user, day) so a concurrent second `start-attempt` call can't race past the cap or double-claim the same `game_index`. Replaces an earlier count-then-insert version that had exactly that race, called out in its own code comments as a "soft guard" pending this fix.
 - **Leaderboard placement uses the attempt's completion timestamp.** An attempt that starts before midnight and finishes after is scored against the day it finished, keeping each day's leaderboard closeable and immutable once its settlement job runs — no reconciliation of an already-closed day is ever needed.
 
 Net effect: a player can occasionally have an attempt's score land on the following day without it costing that day a slot — bounded to at most one such attempt per player per day boundary.
