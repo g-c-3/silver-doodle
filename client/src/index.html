@@ -285,6 +285,20 @@
     </div>
   </section>
 
+  <!-- Themed confirm dialog — replaces the native browser confirm() popup,
+       which doesn't match the app's look. Lives outside the .screen/showScreen
+       system (not in app.js's `screens` array) since it overlays whichever
+       screen is currently showing rather than being a screen itself. -->
+  <div id="confirm-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <p class="modal-message" id="confirm-modal-message"></p>
+      <div class="modal-actions">
+        <button id="confirm-modal-cancel-btn" type="button" class="secondary">Cancel</button>
+        <button id="confirm-modal-ok-btn" type="button" class="danger">Sign out</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
