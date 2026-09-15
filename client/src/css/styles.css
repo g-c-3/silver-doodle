@@ -254,6 +254,32 @@ button:disabled {
   max-width: 420px;
 }
 
+/* Same look as .lb-tabs/.lb-tab (Leaderboard) but a separate class
+   deliberately — app.js wires clicks by class name, and sharing one class
+   between two screens' tab groups would fire both screens' handlers off the
+   same click. */
+.history-tabs {
+  display: flex;
+  gap: 6px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 4px;
+}
+
+.history-tab {
+  flex: 1;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 8px 6px;
+  border-radius: calc(var(--radius) - 4px);
+}
+
+.history-tab.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+}
+
 .history-list {
   display: flex;
   flex-direction: column;
