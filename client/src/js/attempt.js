@@ -24,6 +24,13 @@
 // player sees the same bonus board at the same point — see
 // docs/DECISIONS.md's 2026-09-14 Phase 6 entry for the reasoning.
 //
+// PHASE 8 (forfeit detection): startAttempt() also starts a ~20s heartbeat
+// (startHeartbeat()/sendHeartbeat()) for the lifetime of the attempt,
+// stopped on both terminal paths (failAttempt(), finishAttempt()). This only
+// proves liveness to the server — see server/functions/attempt-heartbeat/
+// index.ts and forfeit-stale-attempts/index.ts (the scheduled sweep that
+// actually marks a stale attempt forfeited) for the full mechanism.
+//
 // PHASE 5 (score integrity): the attempt payload — {attemptId,
 // gameDefinitionId, levels[]}, one record per finished/failed level via
 // pushLevelRecord() — is submitted to the `score-replay` Supabase Edge
@@ -93,6 +100,7 @@ const Attempt = (() => {
   const LIFE_EXTENSION_SECONDS = 60;
   const SWIPE_THRESHOLD_PX = 18; // pointer movement below this is treated as a tap, not a swipe
   const HINT_IDLE_MS = 5000; // no successful move for this long -> highlight all available moves
+  const HEARTBEAT_INTERVAL_MS = 20000; // proves liveness to the Phase 8 forfeit-detection sweep
 
   let a = null; // current attempt state
   let selectedCell = null; // [r,c] or null — used by the tap-tap flow only
@@ -101,6 +109,7 @@ const Attempt = (() => {
   let pendingNext = null; // function to call from the level-complete screen's continue button
   let hintTimeoutHandle = null;
   let hintedCells = []; // "r,c" keys currently glowing — re-applied by renderBoard() on every re-render
+  let heartbeatHandle = null;
 
   function el(id) {
     return document.getElementById(id);
@@ -176,6 +185,7 @@ const Attempt = (() => {
       serverResult: null, // filled in once submitAttempt()'s Edge Function call resolves
     };
     selectedCell = null;
+    startHeartbeat();
     prepareLevel({ bonus: false });
   }
 
@@ -319,6 +329,47 @@ const Attempt = (() => {
     });
   }
 
+  // ---- Heartbeat (Phase 8 forfeit detection) ----
+  // Proves this attempt is still actually being played, server-side. Never
+  // reports score/status — attempt-heartbeat only bumps a timestamp. See
+  // that function and forfeit-stale-attempts/index.ts (the scheduled sweep
+  // that actually marks a stale attempt forfeited) for the full mechanism.
+
+  function startHeartbeat() {
+    stopHeartbeat();
+    heartbeatHandle = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+  }
+
+  function stopHeartbeat() {
+    clearInterval(heartbeatHandle);
+    heartbeatHandle = null;
+  }
+
+  async function sendHeartbeat() {
+    if (!a || !a.attemptId) return;
+    try {
+      const { data, error } = await window.db.functions.invoke('attempt-heartbeat', { body: { attemptId: a.attemptId } });
+      if (error) throw error;
+      if (data && data.forfeited) {
+        // The server-side sweep already gave up on this attempt before this
+        // heartbeat arrived (e.g. the app was backgrounded well past the
+        // timeout) — stop treating it as live rather than letting the
+        // player keep playing a run that can never be scored.
+        stopHeartbeat();
+        stopTicking();
+        clearHints();
+        window.alert('This attempt timed out from inactivity and was forfeited.');
+        window.showScreen('screen-home');
+      }
+    } catch (err) {
+      // Best-effort — a single missed heartbeat from a flaky connection
+      // isn't itself fatal; the server's timeout window has generous margin
+      // for exactly this. Just log and let the next interval try again.
+      // eslint-disable-next-line no-console
+      console.error('attempt-heartbeat failed:', err);
+    }
+  }
+
   // Cumulative elapsed ms on THIS level's own clock, since its very first
   // start — survives across any life/ad-life extension, unlike msRemaining()
   // which is always relative to the *current* timer segment. This is what
@@ -416,6 +467,7 @@ const Attempt = (() => {
   function failAttempt() {
     stopTicking();
     clearHints();
+    stopHeartbeat();
     a.totalScore += a.levelScore; // last-shown score is preserved, not dropped
     pushLevelRecord('failed');
     a.status = 'completed';
@@ -528,6 +580,7 @@ const Attempt = (() => {
   function finishAttempt() {
     stopTicking();
     clearHints();
+    stopHeartbeat();
     a.status = 'completed';
     renderSummary();
     window.showScreen('screen-attempt-summary');
