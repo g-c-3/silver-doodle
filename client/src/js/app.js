@@ -56,8 +56,65 @@ function scrubAuthParamsFromUrl() {
   }
 }
 
+const GAME_COUNT_PER_DAY = 12;
+
+// 'YYYY-MM-DD' in IST — same convention as the server's istDateString()
+// helpers (start-attempt, score-replay, etc.), reimplemented client-side
+// since this is purely a display concern.
+function todayIstDateString() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+// IST is a fixed UTC+5:30 offset with no DST, so this is safe as a plain
+// string-built Date rather than needing a timezone library.
+function istDayBoundsUtc(istDateStr) {
+  const start = new Date(`${istDateStr}T00:00:00+05:30`);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+  return { startUtc: start.toISOString(), endUtc: end.toISOString() };
+}
+
+/**
+ * Shown openly on Home, not tucked away — re-derives the same day-window
+ * start-attempt/start_attempt_slot uses server-side for the 12/day cap
+ * (docs/ARCHITECTURE.md Section 8), purely for display. The cap itself is
+ * still enforced server-side regardless of what this shows.
+ */
+async function refreshAttemptsLeftToday() {
+  const badge = document.getElementById('home-attempts-left');
+  if (!badge || !state.session) return;
+  const { startUtc, endUtc } = istDayBoundsUtc(todayIstDateString());
+  const { count, error } = await window.db
+    .from('attempts')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', state.session.user.id)
+    .gte('started_at', startUtc)
+    .lte('started_at', endUtc);
+  if (error) {
+    badge.textContent = '';
+    return;
+  }
+  const used = count ?? 0;
+  const remaining = Math.max(0, GAME_COUNT_PER_DAY - used);
+  badge.className = 'attempts-left-badge';
+  if (remaining === 0) {
+    badge.textContent = 'All 12 attempts used today — come back tomorrow!';
+    badge.classList.add('attempts-none');
+  } else {
+    badge.textContent = `${remaining} of ${GAME_COUNT_PER_DAY} attempts left today`;
+    if (remaining <= 3) badge.classList.add('attempts-low');
+  }
+}
+
 function renderHome() {
   document.getElementById('home-greeting').textContent = `Hi, ${state.profile.display_name}`;
+  refreshAttemptsLeftToday();
 }
 
 function renderProfileScreen() {
