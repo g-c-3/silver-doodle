@@ -157,6 +157,28 @@ button:disabled {
   gap: 8px;
 }
 
+.attempts-left-badge {
+  display: inline-block;
+  margin: 0 auto 4px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  background: var(--surface);
+  border: 1px solid #34304a;
+  color: var(--text);
+}
+
+.attempts-left-badge.attempts-low {
+  color: var(--gold);
+  border-color: rgba(245, 185, 66, 0.4);
+}
+
+.attempts-left-badge.attempts-none {
+  color: var(--danger);
+  border-color: rgba(255, 92, 92, 0.4);
+}
+
 .icon-btn-corner {
   position: absolute;
   top: 16px;
