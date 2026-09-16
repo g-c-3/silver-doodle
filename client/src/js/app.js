@@ -212,7 +212,11 @@ document.getElementById('home-leaderboard-btn').addEventListener('click', () => 
 });
 
 document.getElementById('home-history-btn').addEventListener('click', () => {
-  AttemptHistory.open(state.session.user.id);
+  AttemptHistory.open(state.session.user.id, 'all');
+});
+
+document.getElementById('home-attempts-left').addEventListener('click', () => {
+  AttemptHistory.open(state.session.user.id, 'today');
 });
 
 document.getElementById('history-back-btn').addEventListener('click', () => {

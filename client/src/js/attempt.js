@@ -911,26 +911,29 @@ const Attempt = (() => {
     if (!r) {
       // Submission still in flight — client-computed figures shown as a
       // provisional preview only, explicitly labeled as such.
-      el('summary-score').textContent = `${Math.round(a.totalScore).toLocaleString()} (Score is being saved, please wait...)`;
+      el('summary-score').textContent = `${Math.round(a.totalScore).toLocaleString()}`;
       el('summary-time-bonus').textContent = `${formatTimeBonus(a.timeBonusMicros)} (mm:ss:ms:µs, provisional)`;
       el('summary-lives').textContent = `${livesStatusText()} (provisional)`;
       el('summary-levels').textContent = `${a.levelsReached} (provisional)`;
+      el('summary-status-message').textContent = 'Score is being saved, please wait...';
       return;
     }
     if (!r.valid) {
-      el('summary-score').textContent = `Not validated — ${r.error || 'unknown error'}`;
+      el('summary-score').textContent = '—';
       el('summary-time-bonus').textContent = '—';
       el('summary-lives').textContent = '—';
       el('summary-levels').textContent = '—';
+      el('summary-status-message').textContent = `Not validated — ${r.error || 'unknown error'}`;
       return;
     }
     // Server-authoritative figures — this is what actually counts once
     // Phase 6/7 wire attempts into persistence and the leaderboard.
-    el('summary-score').textContent = `${Math.round(r.score).toLocaleString()} (Score successfully saved in Game server)`;
+    el('summary-score').textContent = `${Math.round(r.score).toLocaleString()}`;
     el('summary-time-bonus').textContent = `${formatTimeBonus(r.timeBonusMicros)} (mm:ss:ms:µs)`;
     el('summary-lives').textContent =
       `${r.livesUsed}/${STARTING_LIVES} regular` + (r.adLivesUsed > 0 ? ` + ${r.adLivesUsed} ad-life${r.adLivesUsed === 1 ? '' : 's'}` : '');
     el('summary-levels').textContent = `${r.levelsReached}`;
+    el('summary-status-message').textContent = 'Score successfully saved in Game server';
   }
 
   return {

@@ -146,9 +146,9 @@ const AttemptHistory = (function () {
     renderCurrentTab();
   }
 
-  async function open(userId) {
+  async function open(userId, initialTab = 'today') {
     window.showScreen('screen-attempt-history');
-    currentTab = 'today';
+    currentTab = initialTab;
     renderTabs();
     const errEl = el('history-error');
     el('history-list').innerHTML = '';
