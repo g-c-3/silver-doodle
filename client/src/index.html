@@ -63,6 +63,13 @@
 
   <!-- Home -->
   <section id="screen-home" class="screen hidden">
+    <button id="home-info-btn" type="button" class="icon-btn-corner icon-btn-corner-left" aria-label="About" title="About">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="16" x2="12" y2="11" />
+        <line x1="12" y1="8" x2="12.01" y2="8" />
+      </svg>
+    </button>
     <button id="home-logout-btn" type="button" class="icon-btn-corner" aria-label="Sign out" title="Sign out">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 2v10" />
@@ -330,6 +337,71 @@
       <div id="history-list" class="history-list"></div>
       <p id="history-empty" class="muted hidden">No attempts yet — play a level!</p>
       <button id="history-back-btn" type="button" class="link">Back</button>
+    </div>
+  </section>
+
+  <!-- Info / About -->
+  <section id="screen-info" class="screen hidden">
+    <div class="center-column info-column">
+      <div class="info-hero">
+        <div class="info-hero-logo">🧩</div>
+        <h1 class="info-studio-name">GC3 Studio Inc.</h1>
+        <p class="info-tagline">Small studio. Big matches.</p>
+      </div>
+
+      <div class="info-card info-card-pink">
+        <h2 class="info-card-header">🎮 How to Play</h2>
+        <p>Swap two adjacent emoji to line up 3 or more of the same kind. Matches clear, new tiles fall in, and chain reactions score extra points.</p>
+        <p>Each level shows a moves target — reach it before the timer runs out to clear the level and move on to the next one.</p>
+      </div>
+
+      <div class="info-card info-card-red">
+        <h2 class="info-card-header">❤️ Lives &amp; Time</h2>
+        <p>Every attempt starts with 3 lives. If a level's timer hits zero, a life is used automatically and you get +60 seconds to keep going on that same level — nothing about your board or progress is lost.</p>
+        <p>Out of lives? Watch one ad for a single extra life (+60s), or give up — your score up to that point is still saved, not reset to zero.</p>
+      </div>
+
+      <div class="info-card info-card-gold">
+        <h2 class="info-card-header">🎁 Bonus Rounds</h2>
+        <p>Every so often you'll be offered a bonus round between levels — no lives at risk, no moves target, just pure extra score if you want to play it. Completely optional.</p>
+      </div>
+
+      <div class="info-card info-card-teal">
+        <h2 class="info-card-header">🎨 Themes</h2>
+        <p>Every level has its own emoji theme — desserts, pets, tools, land vehicles, drinks, and more. Today's themes are the same for every player, so everyone's playing the same set of boards.</p>
+      </div>
+
+      <div class="info-card info-card-purple">
+        <h2 class="info-card-header">🔀 Daily Shuffle</h2>
+        <p>12 games are generated fresh each day, identical for everyone. What's different is the order — your 12 attempts get their own fair, random shuffle of that day's games, so no two players see them in quite the same sequence.</p>
+      </div>
+
+      <div class="info-card info-card-green">
+        <h2 class="info-card-header">⏱️ Time Bonus</h2>
+        <p>Clear a level with time to spare and the leftover time banks as your Time Bonus, tracked down to the microsecond. It counts toward your leaderboard placement too.</p>
+      </div>
+
+      <div class="info-card info-card-blue">
+        <h2 class="info-card-header">🏆 Leaderboards</h2>
+        <p>Daily, weekly, and all-time boards — ranked by score first, then average score, then time bonus, then fewest lives used, then fewest attempts, then fewest levels needed, as tie-breakers in that order. Check your own rank and see exactly what's separating you from the player above you.</p>
+      </div>
+
+      <div class="info-card info-card-orange">
+        <h2 class="info-card-header">🎯 Attempts</h2>
+        <p>12 attempts per day, resetting at midnight IST. Each attempt can run through many levels back to back for as long as your lives hold out. Your Home screen always shows how many you've got left today.</p>
+      </div>
+
+      <div class="info-card info-card-cyan">
+        <h2 class="info-card-header">💡 Hints &amp; History</h2>
+        <p>Stuck for 5 seconds? One tile will glow to nudge you toward an available move. Every attempt you've played — completed, forfeited, or still in progress — is logged in your History, viewable by today or all time.</p>
+      </div>
+
+      <div class="info-card info-card-magenta">
+        <h2 class="info-card-header">🔒 Fair Play</h2>
+        <p>Every score is replayed and verified by the game server from your actual moves — nothing is taken on trust from the app itself. That's what keeps the leaderboard honest for everyone.</p>
+      </div>
+
+      <button id="info-back-btn" type="button" class="link">Back</button>
     </div>
   </section>
 
