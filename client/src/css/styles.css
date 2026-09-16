@@ -223,6 +223,107 @@ button:disabled {
   justify-content: center;
 }
 
+.icon-btn-corner-left {
+  left: 16px;
+  right: auto;
+}
+
+.info-column {
+  max-width: 460px;
+  gap: 14px;
+}
+
+.info-hero {
+  text-align: center;
+  padding: 4px 0 6px;
+}
+
+.info-hero-logo {
+  font-size: 48px;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.info-studio-name {
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+  margin: 0;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2), var(--gold));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 36px rgba(124, 111, 255, 0.35);
+}
+
+.info-tagline {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+  margin: 6px 0 0;
+}
+
+.info-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  text-align: left;
+  border-left: 3px solid transparent;
+}
+
+.info-card p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.info-card p:first-of-type {
+  margin-top: 8px;
+}
+
+.info-card-header {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.info-card-pink { border-left-color: var(--accent); }
+.info-card-pink .info-card-header { color: var(--accent); }
+
+.info-card-red { border-left-color: var(--danger); }
+.info-card-red .info-card-header { color: var(--danger); }
+
+.info-card-gold { border-left-color: var(--gold); }
+.info-card-gold .info-card-header { color: var(--gold); }
+
+.info-card-teal { border-left-color: #34d399; }
+.info-card-teal .info-card-header { color: #34d399; }
+
+.info-card-purple { border-left-color: var(--accent-2); }
+.info-card-purple .info-card-header { color: var(--accent-2); }
+
+.info-card-green { border-left-color: #4ade80; }
+.info-card-green .info-card-header { color: #4ade80; }
+
+.info-card-blue { border-left-color: #60a5fa; }
+.info-card-blue .info-card-header { color: #60a5fa; }
+
+.info-card-orange { border-left-color: #fb923c; }
+.info-card-orange .info-card-header { color: #fb923c; }
+
+.info-card-cyan { border-left-color: #22d3ee; }
+.info-card-cyan .info-card-header { color: #22d3ee; }
+
+.info-card-magenta { border-left-color: #e879f9; }
+.info-card-magenta .info-card-header { color: #e879f9; }
+
+#screen-info {
+  align-items: flex-start;
+  padding-top: 40px;
+  padding-bottom: 40px;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
