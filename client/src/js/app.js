@@ -97,17 +97,18 @@ async function refreshAttemptsLeftToday() {
     .gte('started_at', startUtc)
     .lte('started_at', endUtc);
   if (error) {
-    badge.textContent = '';
+    badge.querySelector('span').textContent = '';
     return;
   }
   const used = count ?? 0;
   const remaining = Math.max(0, GAME_COUNT_PER_DAY - used);
   badge.className = 'attempts-left-badge';
+  const textEl = badge.querySelector('span');
   if (remaining === 0) {
-    badge.textContent = 'All 12 attempts used today — come back tomorrow!';
+    textEl.textContent = 'All 12 attempts used today — come back tomorrow!';
     badge.classList.add('attempts-none');
   } else {
-    badge.textContent = `${remaining} of ${GAME_COUNT_PER_DAY} attempts left today`;
+    textEl.textContent = `${remaining} of ${GAME_COUNT_PER_DAY} attempts left today`;
     if (remaining <= 3) badge.classList.add('attempts-low');
   }
 }
