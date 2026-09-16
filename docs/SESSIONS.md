@@ -4,6 +4,46 @@ Most recent entry first.
 
 ---
 
+**2026-09-15/16 — Phase 7 (Leaderboards) and Phase 8 (Attempt cap & forfeit tracking) completed; extensive live-debugging and UI polish**
+
+Long continuous session, starting from the "Phase 7" handoff point in the previous entry and carrying through to a full UI polish pass two days later. Structured here roughly in the order things happened, since several fixes were found *because of* testing the feature before it, not planned upfront.
+
+**Pre-Phase-7 bug fix:** `offerAdLife()` (the "out of lives — watch ad or give up?" prompt) never set `a.locked = true`, so the board underneath it stayed fully tappable — moves and score kept changing while the prompt was showing. Fixed by locking on prompt show, unlocking only once the player picks an option.
+
+**Phase 7 — Leaderboards.** Discovered along the way, not assumed upfront: `daily_stats`/`weekly_stats`/`all_time_stats`/`user_year_activity` had existed since Phase 2 with nothing ever writing to them — `score-replay` only ever updated the `attempts` row itself. Closed with two new Postgres functions (`record_attempt_start`, `record_attempt_completion`, both service-role only) wired into `start-attempt`/`score-replay`. Built the `leaderboard` Edge Function on top — the 7-tier cascade (ARCHITECTURE.md Section 7) is computed in Deno over the fetched scope table rather than a raw SQL `ORDER BY` chain, deliberately, since a multi-expression tie-break chain with divide-by-zero guards is easier to get subtly wrong in SQL. Returns a ranked `top` list plus the caller's own `you` entry with `decidingTier`/`decidingTierName`. Client: `leaderboard.js` + `#screen-leaderboard`, three tabs (Daily/Weekly/All-time).
+
+Debugging along the way: the stats migration wasn't run before the first test (PostgREST "function not found in schema cache" — a schema-creation step is separate from redeploying function code, a distinction that came up repeatedly this session); then `score-replay` was found silently swallowing `record_attempt_completion` failures (the error only ever reached the HTTP response body, never `console.error`) — the *first* instance of a pattern that recurred twice more later in the session. Verified end to end against two real test accounts (a second account, "GC", was created deliberately to prove the cascade actually ranks more than one player); every derived field (`avgScore`, `avgTimeBonusMicros`, etc.) checked out arithmetically against the raw `daily_stats` row.
+
+**Scoring rule changed on request:** a failed (given-up) level now contributes its earned score to the attempt total, matching what the live HUD was already showing the player at the moment they gave up — previously it scored 0, per the original Section 3.3 rule. Time bonus and `levelsReached` stay excluded (the level itself was never cleared). Changed on both the client (`attempt.js`'s `failAttempt()`) and server (`score-replay`'s replay loop) together, since they have to agree.
+
+**Idle-hint highlighting added, then corrected twice from live screenshots**, ending at: after 5s with no successful move, exactly one tile glows (the single tile to move), persisting until the next successful move restarts the countdown. The first version highlighted every cell touched by any legal move (nearly the whole 8x8 board); the second highlighted a resulting match's full run; neither was actually what was asked for.
+
+**Toast (life-used/ad-life message) redesigned:** dropped the gradient-pill background entirely for large bold text with a text-shadow, shown 5s instead of 3s.
+
+**Home screen additions:** a corner logout button (later upgraded from a native `window.confirm()`/`window.alert()` to fully themed in-app modals — `showConfirm()`/`showAlert()` in `app.js`, colored icon badges per alert type, reusable for anything added later).
+
+**Phase 8 — Attempt cap & forfeit tracking.**
+- *Slot cap:* the existing 12/day check was a count-then-insert with no lock — its own code comments already called it a "soft guard, not the real Phase 8 cap." Replaced with `start_attempt_slot`, a Postgres function that advisory-locks per (user, day) so a concurrent second call can't race past the cap or double-claim the same `game_index`. Not stress-tested against an actual race (would need two near-simultaneous calls to exercise), but the mechanism is sound and normal single-tab play is unaffected either way.
+- *Forfeit detection:* `attempt-heartbeat` (client-invoked, ~20s interval for the life of an attempt, only bumps `attempts.last_heartbeat_at`) + `forfeit-stale-attempts` (a **scheduled** function via Supabase Cron, every 5 min, never client-invoked — marks `in_progress` attempts stale past 5 minutes as `forfeited`, score 0). Real debugging here too: the Cron job's "Succeeded" status turned out to only confirm the async `net.http_post` dispatch, not that the target function actually ran or did anything — the real cause of "nothing's being forfeited" was that the `last_heartbeat_at` column migration had never actually been run; separately, `forfeit-stale-attempts` had the same silent-error-swallowing bug as `score-replay` above (fixed the same way, `console.error` added). Verified against live data afterward: stale rows correctly flipped to `forfeited`, `completed` rows untouched.
+- *A real, unrelated bug found while testing forfeit detection:* `app.js`'s `onAuthStateChange` listener force-navigated to Home on every `SIGNED_IN` event — but supabase-js re-fires `SIGNED_IN` with the same session whenever the browser tab regains focus, not just on a genuine new login. Every tab-switch-and-back was silently abandoning the in-progress game via `routeAfterAuth()`, without ever calling `failAttempt()`/`finishAttempt()` — so the heartbeat/tick timers never stopped, they just kept running against whatever the `a` object got reassigned to next. This was very likely the actual cause of a separately-reported "score carries over into the next game" symptom, even though a fresh `a = {...totalScore: 0}` is genuinely created on every `startAttempt()` call. Fixed with a `hasRoutedOnce` flag restricting real navigation to the first `SIGNED_IN`/`INITIAL_SESSION` of a page load.
+- *Attempt history UI:* `attempt-history.js` + `#screen-attempt-history`, reading the player's own `attempts` rows directly via the existing `attempts_select_own` RLS policy (no new Edge Function needed — every field the screen needs was already a plain column). Later given Today/All tabs (Today numbers rows `Attempt N/12` in start order, re-deriving the same day-window the slot cap uses server-side) and had its date/time display fixed to force `Asia/Kolkata` explicitly rather than relying on the device's local timezone setting, which had been the actual (if coincidentally correct-looking) behavior before.
+
+**Final polish pass (2026-09-16):** attempt-summary screen's save-status text moved out of the score number into its own line below the button. Home screen's "N of 12 attempts left today" restyled from a solid gradient fill to a dark-filled pill with a gradient border and gradient text (a layered-background technique, since `border-image` can't do rounded corners), made tappable — opens Attempt History straight to Today; the separate "History" nav button now defaults to All instead, so the two entry points serve different purposes. New Info/About screen (`#screen-info`, left-side icon button mirroring the logout button): a grand gradient-text "GC3 Studio Inc." hero, followed by ten color-coded cards covering how to play, lives & time, bonus rounds, themes, the daily per-player shuffle, time bonus, leaderboard tie-break order, attempts, hints & history, and fair play (server-side score replay).
+
+**Bugs fixed this session, for quick reference (all detailed above and in DECISIONS.md):**
+1. `offerAdLife()` not locking the board.
+2. `score-replay` and `forfeit-stale-attempts` both silently swallowing DB errors (same pattern, found twice, fixed the same way both times).
+3. 12/day slot-cap race condition (soft guard → atomic advisory-locked function).
+4. `app.js` force-navigating to Home on every re-fired `SIGNED_IN`, silently abandoning in-progress games on tab switch.
+5. Attempt-history timestamps relying on device-local timezone instead of forced IST.
+6. (Caught before shipping, not a live bug) the attempts-left badge's error-handling path would have deleted its own inner `<span>` on first API error, breaking every subsequent refresh.
+
+**Decisions made:** see docs/DECISIONS.md's many 2026-09-15 and 2026-09-16 entries — too numerous to summarize individually here without duplicating them.
+
+**Next session start point:** Phase 9 — All-time stats & calendar (per-player stats view; month/year calendar reading `user_year_activity`, drilling into per-day attempt detail). No known open gaps blocking this — Phase 7 and 8 are both complete and verified against live data.
+
+---
+
 **2026-09-14 (fourth entry) — deployment, live debugging, first confirmed end-to-end run**
 
 Continued same-day, walking through actual deployment interactively rather than as an offline coding pass — this entry is mostly what got found and fixed while doing that, not new features.
