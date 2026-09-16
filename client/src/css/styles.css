@@ -164,18 +164,46 @@ button:disabled {
   border-radius: 999px;
   font-size: 14px;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  border: none;
-  color: #fff;
+  border: 2px solid transparent;
   cursor: pointer;
+  /* Two background layers: the padding-box one fills the inner area with a
+     solid color so only the border ring shows the gradient (border-image
+     would be simpler but ignores border-radius, so it can't make a rounded
+     gradient border on its own — this layered-background technique can). */
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(135deg, var(--accent), var(--accent-2)) border-box;
+}
+
+.attempts-left-badge span {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .attempts-left-badge.attempts-low {
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(135deg, var(--gold), var(--accent)) border-box;
+}
+
+.attempts-left-badge.attempts-low span {
   background: linear-gradient(135deg, var(--gold), var(--accent));
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 
 .attempts-left-badge.attempts-none {
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(135deg, var(--danger), var(--accent-2)) border-box;
+}
+
+.attempts-left-badge.attempts-none span {
   background: linear-gradient(135deg, var(--danger), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 
 .icon-btn-corner {
