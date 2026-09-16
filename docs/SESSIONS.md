@@ -4,6 +4,22 @@ Most recent entry first.
 
 ---
 
+**2026-09-16 — Phase 9 (All-time stats & calendar) built**
+
+Started from the Phase 8 handoff point. Read ROADMAP.md, the last SESSIONS.md entry, DECISIONS.md, and ARCHITECTURE.md in full, then confirmed the schema/RLS picture directly against the live repo before writing anything: `record_attempt_start` (added during Phase 7) already writes to `user_year_activity` on every attempt start, so the calendar's data source is already populated — no new migration or Postgres function needed for this phase.
+
+**New screen: `#screen-stats`, `client/src/js/stats.js`.** Two pieces:
+- *Stat tiles* — days played, total attempts, best day, least day. "Total attempts" reads `all_time_stats.attempts_started` directly. "Days played"/"best day"/"least day" are derived client-side from the player's own `daily_stats` rows filtered to `attempts_completed > 0` (a day with no completed attempt has no real single-attempt score to rank), using `max_score` as the best/least metric — the same metric leaderboard tier 1 already uses, kept consistent deliberately.
+- *Month calendar* — dot-marks days with any recorded activity by reading `user_year_activity` for the displayed year (fetched once per year, cached in memory across month navigation within that year). Tapping a marked day drills into that day's own `attempts` rows, queried the same way attempt-history.js already does (direct read via `attempts_select_own`, IST day-boundary window matching `record_attempt_start`'s own date scoping).
+
+No new Edge Function was needed anywhere in this phase — every field read is already covered by existing RLS from Phase 2/7 (`all_time_stats` select-all, `daily_stats` select-all, `user_year_activity` select-own, `attempts` select-own), same reasoning Phase 8's attempt-history screen already established.
+
+Wiring: `#screen-stats` added to the router in `app.js`, a new "Stats" button added to Home (between History and Profile), calendar prev/next and day-panel close buttons wired. CSS added under a new "Phase 9" section in `styles.css`, reusing the existing `.stat-grid`/`.stat-item` and `.history-list`/`.history-row` patterns rather than inventing new ones, plus new `.cal-*` classes for the calendar grid itself.
+
+**Not done this session:** no live-device verification — this was built and locally sanity-checked (JS syntax check, HTML id cross-reference, mental read-through of the RLS policies against what's queried) but never actually loaded against the live Supabase project. **Next session should start by testing Phase 9 on-device before moving to Phase 10.**
+
+---
+
 **2026-09-15/16 — Phase 7 (Leaderboards) and Phase 8 (Attempt cap & forfeit tracking) completed; extensive live-debugging and UI polish**
 
 Long continuous session, starting from the "Phase 7" handoff point in the previous entry and carrying through to a full UI polish pass two days later. Structured here roughly in the order things happened, since several fixes were found *because of* testing the feature before it, not planned upfront.
