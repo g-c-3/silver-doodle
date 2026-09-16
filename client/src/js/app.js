@@ -19,6 +19,7 @@ const screens = [
   'screen-attempt-summary',
   'screen-leaderboard',
   'screen-attempt-history',
+  'screen-info',
   'screen-profile',
   'screen-email-change',
   'screen-check-email-change',
@@ -214,6 +215,14 @@ document.getElementById('home-leaderboard-btn').addEventListener('click', () => 
 
 document.getElementById('home-history-btn').addEventListener('click', () => {
   AttemptHistory.open(state.session.user.id, 'all');
+});
+
+document.getElementById('home-info-btn').addEventListener('click', () => {
+  showScreen('screen-info');
+});
+
+document.getElementById('info-back-btn').addEventListener('click', () => {
+  showScreen('screen-home');
 });
 
 document.getElementById('home-attempts-left').addEventListener('click', () => {
