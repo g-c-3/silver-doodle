@@ -183,6 +183,8 @@ const Attempt = (() => {
       recentThemeIds: [], // last 3 *slot* themes completed, for bonus mixing
       payloadLevels: [], // Phase 5 submission payload — one record per finished/failed level, see pushLevelRecord()
       serverResult: null, // filled in once submitAttempt()'s Edge Function call resolves
+      submitting: false, // guards against overlapping submitAttempt() calls (auto-retry + a manual Retry tap)
+      submitAttempts: 0, // how many submitAttempt() calls have been made for this attempt so far
     };
     selectedCell = null;
     startHeartbeat();
@@ -359,6 +361,10 @@ const Attempt = (() => {
         stopTicking();
         clearHints();
         await window.showAlert('This attempt timed out from inactivity and was forfeited.', 'warning');
+        // FIXED 2026-09-16: same stale-badge bug as summary-home-btn in
+        // app.js — this path also leaves screen-game without ever
+        // re-fetching the Home attempts-left count.
+        if (window.refreshAttemptsLeftToday) window.refreshAttemptsLeftToday();
         window.showScreen('screen-home');
       }
     } catch (err) {
@@ -467,7 +473,6 @@ const Attempt = (() => {
   function failAttempt() {
     stopTicking();
     clearHints();
-    stopHeartbeat();
     a.totalScore += a.levelScore; // last-shown score is preserved, not dropped
     pushLevelRecord('failed');
     a.status = 'completed';
@@ -502,17 +507,83 @@ const Attempt = (() => {
   // updating the attemptId row with the final result. The client-computed
   // a.totalScore shown up to this point is never trusted as-is — only the
   // server's response is.
+  //
+  // FIXED 2026-09-16: a single failed network call here used to be
+  // unrecoverable data loss for a fully-played attempt. The old code set
+  // serverResult to a terminal "not validated" error with no retry path,
+  // AND finishAttempt()/failAttempt() had already called stopHeartbeat()
+  // before this ever ran — so the attempts row sat at status: 'in_progress'
+  // with a frozen last_heartbeat_at, and forfeit-stale-attempts (the 5-min
+  // scheduled sweep, server/functions/forfeit-stale-attempts/index.ts)
+  // would eventually flip it to 'forfeited'/score 0, discarding a
+  // completely legitimate playthrough. Two changes fix this together:
+  //   1. The heartbeat is no longer stopped until submitAttempt() actually
+  //      succeeds (see the two call sites above) — score-replay itself only
+  //      refuses an attempt whose status is already 'completed' (see its
+  //      own comment), not 'forfeited', so as long as last_heartbeat_at
+  //      keeps getting bumped the row never goes stale in the first place
+  //      and the sweep never touches it, however long submission takes.
+  //   2. This function now retries itself automatically a few times with
+  //      backoff before giving up, and exposes retrySubmitAttempt() for a
+  //      manual "Retry" button (renderSummary()) so the player can try
+  //      again themselves once they're back on a connection, at any point
+  //      after that.
+  const SUBMIT_RETRY_DELAYS_MS = [2000, 5000, 12000]; // 3 automatic retries after the first attempt
+
   async function submitAttempt() {
+    if (a.submitting) return; // a retry is already in flight — don't overlap it
+    a.submitting = true;
+    a.submitAttempts++;
+    const myAttemptId = a.attemptId; // guards against a stale timer firing after startAttempt() replaces `a`
+
     try {
       const { data, error } = await window.db.functions.invoke('score-replay', {
         body: { attemptId: a.attemptId, gameDefinitionId: a.gameDefinitionId, levels: a.payloadLevels },
       });
       if (error) throw error;
+      if (a.attemptId !== myAttemptId) return; // superseded — a new attempt started while this was in flight
       a.serverResult = data;
+      a.submitting = false;
+      stopHeartbeat(); // only now — submission is confirmed persisted server-side
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('Score-replay submission failed:', err);
-      a.serverResult = { valid: false, error: 'Could not reach the server. Score not yet validated.' };
+      console.error(`Score-replay submission failed (try ${a.submitAttempts}):`, err);
+      if (a.attemptId !== myAttemptId) return;
+      a.submitting = false;
+
+      // A retry can legitimately land after an earlier try actually
+      // succeeded server-side but its response never made it back (e.g. the
+      // connection dropped right after the server wrote the row). score-
+      // replay reports that as a 409 "already submitted" — good news, not a
+      // failure — so it's worth unwrapping the structured body rather than
+      // treating it like every other network error and retrying forever.
+      let structured = null;
+      if (err && err.context && typeof err.context.json === 'function') {
+        try { structured = await err.context.json(); } catch { /* not JSON — a genuine network failure, fall through */ }
+      }
+      if (structured && typeof structured.error === 'string' && /already been submitted/i.test(structured.error)) {
+        a.serverResult = { valid: false, error: 'Already saved on the server — check History for your final score.', alreadySaved: true };
+        stopHeartbeat(); // the row is genuinely completed server-side now, safe to stop
+        if (el('screen-attempt-summary') && !el('screen-attempt-summary').classList.contains('hidden')) renderSummary();
+        return;
+      }
+
+      const retryIndex = a.submitAttempts - 1; // 0-based into SUBMIT_RETRY_DELAYS_MS
+      if (retryIndex < SUBMIT_RETRY_DELAYS_MS.length) {
+        a.serverResult = { valid: false, error: 'Could not reach the server — retrying…', retrying: true };
+        renderSummary();
+        setTimeout(() => {
+          if (a.attemptId === myAttemptId) submitAttempt();
+        }, SUBMIT_RETRY_DELAYS_MS[retryIndex]);
+        return;
+      }
+      // Automatic retries exhausted — hand it to the player. The heartbeat
+      // is still running (see above), so nothing is lost by waiting; tapping
+      // Retry calls this same function again with no extra limit.
+      a.serverResult = {
+        valid: false,
+        error: 'Could not reach the server. Your result is safe — tap Retry once you\'re back online.',
+      };
     }
     // Only re-render if the summary screen is still what's showing — a fast
     // player could in principle already be elsewhere, though nothing in the
@@ -520,6 +591,13 @@ const Attempt = (() => {
     if (el('screen-attempt-summary') && !el('screen-attempt-summary').classList.contains('hidden')) {
       renderSummary();
     }
+  }
+
+  // Manual retry, wired to summary-retry-btn (app.js). Just re-runs
+  // submitAttempt() — the guard/backoff logic above is all shared.
+  function retrySubmitAttempt() {
+    if (!a || a.submitting) return;
+    submitAttempt();
   }
 
   // ---- Level completion ----
@@ -580,7 +658,6 @@ const Attempt = (() => {
   function finishAttempt() {
     stopTicking();
     clearHints();
-    stopHeartbeat();
     a.status = 'completed';
     renderSummary();
     window.showScreen('screen-attempt-summary');
@@ -908,6 +985,7 @@ const Attempt = (() => {
 
   function renderSummary() {
     const r = a.serverResult;
+    const retryBtn = el('summary-retry-btn');
     if (!r) {
       // Submission still in flight — client-computed figures shown as a
       // provisional preview only, explicitly labeled as such.
@@ -916,6 +994,7 @@ const Attempt = (() => {
       el('summary-lives').textContent = `${livesStatusText()} (provisional)`;
       el('summary-levels').textContent = `${a.levelsReached} (provisional)`;
       el('summary-status-message').textContent = 'Score is being saved, please wait...';
+      if (retryBtn) retryBtn.classList.add('hidden');
       return;
     }
     if (!r.valid) {
@@ -924,6 +1003,10 @@ const Attempt = (() => {
       el('summary-lives').textContent = '—';
       el('summary-levels').textContent = '—';
       el('summary-status-message').textContent = `Not validated — ${r.error || 'unknown error'}`;
+      // No Retry button while an automatic retry is already scheduled, or
+      // once the server's confirmed the row is already saved (retrying
+      // that case would only ever hit the same 409 again).
+      if (retryBtn) retryBtn.classList.toggle('hidden', !!r.retrying || !!r.alreadySaved);
       return;
     }
     // Server-authoritative figures — this is what actually counts once
@@ -934,6 +1017,7 @@ const Attempt = (() => {
       `${r.livesUsed}/${STARTING_LIVES} regular` + (r.adLivesUsed > 0 ? ` + ${r.adLivesUsed} ad-life${r.adLivesUsed === 1 ? '' : 's'}` : '');
     el('summary-levels').textContent = `${r.levelsReached}`;
     el('summary-status-message').textContent = 'Score successfully saved in Game server';
+    if (retryBtn) retryBtn.classList.add('hidden');
   }
 
   return {
@@ -943,6 +1027,7 @@ const Attempt = (() => {
     acceptBonus,
     skipBonus,
     continueAfterLevelComplete,
+    retrySubmitAttempt,
   };
 })();
 

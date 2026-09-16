@@ -19,6 +19,7 @@ const screens = [
   'screen-attempt-summary',
   'screen-leaderboard',
   'screen-attempt-history',
+  'screen-stats',
   'screen-info',
   'screen-profile',
   'screen-email-change',
@@ -118,6 +119,11 @@ function renderHome() {
   document.getElementById('home-greeting').textContent = `Hi, ${state.profile.display_name}`;
   refreshAttemptsLeftToday();
 }
+// Exposed on window since attempt.js (a separate script/closure) needs to
+// call this too — same reasoning as showAlert/showConfirm above. Used by the
+// session-timeout-forfeit path, which returns to Home without going through
+// renderHome()/routeAfterAuth() first.
+window.refreshAttemptsLeftToday = refreshAttemptsLeftToday;
 
 function renderProfileScreen() {
   document.getElementById('profile-name-input').value = state.profile.display_name;
@@ -217,6 +223,10 @@ document.getElementById('home-history-btn').addEventListener('click', () => {
   AttemptHistory.open(state.session.user.id, 'all');
 });
 
+document.getElementById('home-stats-btn').addEventListener('click', () => {
+  Stats.open(state.session.user.id);
+});
+
 document.getElementById('home-info-btn').addEventListener('click', () => {
   showScreen('screen-info');
 });
@@ -237,6 +247,24 @@ document.querySelectorAll('.history-tab').forEach((btn) => {
   btn.addEventListener('click', () => {
     AttemptHistory.switchTab(btn.dataset.tab);
   });
+});
+
+// ---- Stats (Phase 9) ----
+
+document.getElementById('stats-back-btn').addEventListener('click', () => {
+  showScreen('screen-home');
+});
+
+document.getElementById('stats-cal-prev').addEventListener('click', () => {
+  Stats.changeMonth(-1);
+});
+
+document.getElementById('stats-cal-next').addEventListener('click', () => {
+  Stats.changeMonth(1);
+});
+
+document.getElementById('stats-day-close-btn').addEventListener('click', () => {
+  Stats.closeDay();
 });
 
 // ---- Leaderboard ----
@@ -274,7 +302,19 @@ document.getElementById('bonus-skip-btn').addEventListener('click', () => {
 });
 
 document.getElementById('summary-home-btn').addEventListener('click', () => {
+  // FIXED 2026-09-16: this used to call showScreen() alone, leaving the
+  // Home badge showing whatever attempt count was last rendered — normally
+  // one attempt stale, since finishing/forfeiting the attempt that was just
+  // played is exactly the kind of change this badge exists to reflect. Only
+  // a manual page reload (which re-runs routeAfterAuth() -> renderHome())
+  // ever picked it up otherwise. renderHome() is safe to call again here:
+  // it just re-sets the greeting text (unchanged) and re-fetches the badge.
+  renderHome();
   showScreen('screen-home');
+});
+
+document.getElementById('summary-retry-btn').addEventListener('click', () => {
+  Attempt.retrySubmitAttempt();
 });
 
 // ---- Profile ----

@@ -56,22 +56,34 @@ const AttemptHistory = (function () {
     return istDateFromIso(new Date().toISOString());
   }
 
-  function formatDateTime(iso) {
+  // Time only, no 'IST' suffix — a building block for the start–end range
+  // below, so 'IST' isn't repeated twice per row.
+  function formatTimeShort(iso) {
+    return new Date(iso).toLocaleString('en-IN', {
+      timeZone: IST_TIME_ZONE,
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+
+  function formatTime(iso) {
+    return formatTimeShort(iso) + ' IST';
+  }
+
+  function formatDateShort(iso) {
     return new Date(iso).toLocaleString('en-IN', {
       timeZone: IST_TIME_ZONE,
       month: 'short',
       day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    }) + ' IST';
+    });
   }
 
-  function formatTime(iso) {
-    return new Date(iso).toLocaleString('en-IN', {
-      timeZone: IST_TIME_ZONE,
-      hour: 'numeric',
-      minute: '2-digit',
-    }) + ' IST';
+  // Start–end range for a finished/forfeited attempt ("3:37–3:41 pm IST").
+  // Falls back to just the start time for an attempt still in_progress,
+  // which has no completed_at yet.
+  function timeRangeLabel(row) {
+    if (!row.completed_at) return formatTime(row.started_at);
+    return `${formatTimeShort(row.started_at)}–${formatTimeShort(row.completed_at)} IST`;
   }
 
   function formatScore(n) {
@@ -92,8 +104,8 @@ const AttemptHistory = (function () {
     if (row.score_day) metaParts.push(`Scored ${row.score_day}`);
     if (row.levels_reached) metaParts.push(`${row.levels_reached} level${row.levels_reached === 1 ? '' : 's'}`);
     const leftLabel = attemptNumber
-      ? `Attempt ${attemptNumber}/12 · ${formatTime(row.started_at)}`
-      : formatDateTime(row.started_at);
+      ? `Attempt ${attemptNumber}/12 · ${timeRangeLabel(row)}`
+      : `${formatDateShort(row.started_at)}, ${timeRangeLabel(row)}`;
     div.innerHTML = `
       <div class="history-row-top">
         <span class="history-row-date">${leftLabel}</span>
