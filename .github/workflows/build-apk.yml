@@ -89,6 +89,25 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Generate app icon from source art
+        # Regenerates every density + adaptive-icon variant from a single
+        # source SVG on every run, the same "nothing native is hand-
+        # committed" approach as everything else here (see
+        # docs/DECISIONS.md's "android/ generated fresh in CI" entry).
+        # Design approved in chat 2026-09-17 (three-tile diagonal match,
+        # neon green glow) -- see client/assets/icon.svg's own header
+        # comment for the one known, deliberately accepted tradeoff (the
+        # glow sits at the icon edge and can clip on a circular launcher
+        # mask). Also generates matching splash screens as an Easy Mode
+        # side effect (same art, centered on the same background color) --
+        # not asked for, but harmless and visually consistent; easy to turn
+        # off later if that turns out not to be wanted.
+        working-directory: client
+        run: |
+          npx @capacitor/assets generate --android \
+            --androidProject android --assetPath assets \
+            --iconBackgroundColor '#14121f' --iconBackgroundColorDark '#14121f'
+
       - name: Decode release keystore
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > client/android/release.keystore
