@@ -36,6 +36,14 @@ body {
   align-items: center;
   justify-content: center;
   padding: 24px;
+  /* Capacitor 8's Android core auto-injects --safe-area-inset-* (custom
+     properties, NOT the native env(safe-area-inset-*) -- Capacitor's own
+     Android WebView doesn't populate env() correctly under edge-to-edge,
+     which is mandatory on API 35+/Android 15+, so targetSdk 36 here always
+     hits this). The 0px fallback keeps plain browser testing (where the
+     variable is never set at all) pixel-identical to before this fix. */
+  padding-top: calc(24px + var(--safe-area-inset-top, 0px));
+  padding-bottom: calc(24px + var(--safe-area-inset-bottom, 0px));
   position: relative; /* anchors #home-logout-btn's corner placement */
 }
 
@@ -151,6 +159,40 @@ button:disabled {
   cursor: default;
 }
 
+/* ---- Auth handoff overlay (magic-link -> app tap) ---- */
+
+.auth-handoff-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-handoff-overlay.hidden {
+  display: none;
+}
+
+/* Standalone rule, deliberately not folded into button.primary above --
+   this is an <a> tag (a real tap has to be a genuine navigation, not a JS
+   click handler, for the browser to allow handing off to a custom URL
+   scheme — see index.html's comment on #auth-handoff-overlay), so it needs
+   its own selector rather than sharing one scoped to `button`. */
+a.primary {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: white;
+}
+
 .row {
   display: flex;
   justify-content: space-between;
@@ -208,7 +250,11 @@ button:disabled {
 
 .icon-btn-corner {
   position: absolute;
-  top: 16px;
+  /* Same reasoning as .screen's padding-top -- position:absolute measures
+     top/right from the parent's padding edge, not its content edge, so this
+     needed its own safe-area offset; the .screen padding fix above doesn't
+     reach it on its own. */
+  top: calc(16px + var(--safe-area-inset-top, 0px));
   right: 16px;
   width: 40px;
   height: 40px;
@@ -320,7 +366,7 @@ button:disabled {
 
 #screen-info {
   align-items: flex-start;
-  padding-top: 40px;
+  padding-top: calc(40px + var(--safe-area-inset-top, 0px));
   padding-bottom: 40px;
 }
 
@@ -618,6 +664,7 @@ button:disabled {
 
 #screen-game {
   padding: 16px 10px 10px;
+  padding-top: calc(16px + var(--safe-area-inset-top, 0px));
   align-items: flex-start; /* whole block starts near the top with breathing room, not vertically centered */
 }
 
