@@ -29,15 +29,25 @@ client/
   src/                 game HTML/CSS/JS
     js/game-engine.js  pure match-3 logic (seeded RNG, board, matches, scoring, cascades)
     js/attempt.js      attempt orchestration (forced-sequential slots, lives, bonus trigger, rendering)
-  android/             Capacitor Android project
+  android/             Capacitor Android project — NOT committed; scaffolded fresh by build-apk.yml
+                        on every CI run instead (see DECISIONS.md's 2026-09-16 "android/ generated
+                        fresh in CI" entry — the short version: committing it would mean uploading
+                        ~50+ generated native files by hand through GitHub's mobile web UI)
   capacitor.config.json
+  package.json          pinned exact @capacitor/* versions — keeps the CI-generated android/
+                         project's shape stable run to run, which patch_build_gradle.py depends on
 server/
   functions/           Supabase Edge Functions (score replay validation, daily game-definition generation, leaderboard settlement)
 supabase/
   migrations/           Postgres schema migrations (SQL Editor, run manually — Phase 2 onward)
+  config.toml           per-function Edge Function config — currently just pins verify_jwt = false
+                         for the two cron-only functions (Phase 11)
 .github/workflows/
   build-apk.yml
   deploy-functions.yml
+  scripts/patch_build_gradle.py   injects release signingConfig + versionCode/versionName into the
+                                   CI-generated app/build.gradle (Phase 11)
+.gitignore
 privacy-policy.html     served via GitHub Pages, required before Google Play submission
 ```
 
@@ -239,10 +249,13 @@ Email + OTP only, via Supabase Auth — no phone verification. Implemented as a 
 
 ## 11. CI/CD
 
-- `build-apk.yml` — Capacitor + Gradle build, produces an APK artifact and/or GitHub Release. Reads Android signing secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and writes `GOOGLE_SERVICES_JSON` out to `client/android/app/google-services.json` during the build. Note: the keystore is PKCS12 format, which does not support separate store/key passwords — `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD` hold the same value.
-- `deploy-functions.yml` — deploys Supabase Edge Functions on push to `server/functions/`. Reads `SUPABASE_ACCESS_TOKEN` (scoped to this project only, Edge Functions: Read-write, no other permissions) and `SUPABASE_PROJECT_REF`.
+Built 2026-09-16, out of roadmap order ahead of Phase 10 (Ads) — see DECISIONS.md's 2026-09-16 sequencing entry for why. **Not yet confirmed against a live GitHub Actions run** — see the same DECISIONS.md entry for exactly what was and wasn't verified before delivery.
 
-Neither workflow file exists yet (Phase 11); the secrets they'll read are provisioned and confirmed in place ahead of that phase.
+**`build-apk.yml`.** `client/android/` is not committed (see Section 2) — this workflow is the only place it's ever created. Per run: scaffolds it fresh via the pinned-version `@capacitor/cli` (`npx cap add android && npx cap sync android`), decodes `ANDROID_KEYSTORE_BASE64` into a keystore file and writes `client/android/keystore.properties` alongside it from `ANDROID_KEYSTORE_PASSWORD`/`ANDROID_KEY_ALIAS`/`ANDROID_KEY_PASSWORD` (the keystore is PKCS12, which doesn't support separate store/key passwords, so those two secrets hold the same value), writes `GOOGLE_SERVICES_JSON` out to `client/android/app/google-services.json` (Capacitor's generated `app/build.gradle` only applies the `google-services` Gradle plugin if this file exists and is non-empty, so nothing further needs wiring for that), then runs `.github/workflows/scripts/patch_build_gradle.py` to add a release `signingConfig` reading that `keystore.properties` and to bump `versionCode`/`versionName` from `github.run_number`, before `gradlew assembleRelease`. The resulting APK is uploaded both as a workflow artifact and attached to a GitHub Release (marked prerelease — distribution is manual sideload only until Phase 12).
+
+**`deploy-functions.yml`.** Triggers on push to `server/functions/**`. The Supabase CLI expects functions under `supabase/functions/`, which this repo deliberately doesn't use as a real directory (Section 2) — the workflow stages a copy there at deploy time only, then runs `supabase functions deploy --use-api --project-ref "$SUPABASE_PROJECT_REF"` (Docker-free; deploys every function found, no need to name them individually) using `SUPABASE_ACCESS_TOKEN`.
+
+**`supabase/config.toml`.** Pins `verify_jwt = false` explicitly for `forfeit-stale-attempts` and `generate-daily-games` — both cron-only, both previously relying on a Dashboard-only toggle a CLI deploy could otherwise have silently reset. See DECISIONS.md for why this matters.
 
 GitHub Actions handles all building; no local terminal build steps are ever required.
 

@@ -4,6 +4,25 @@ Most recent entry first.
 
 ---
 
+**2026-09-16 (continued) — Three device-testing bugs fixed, then Phase 11 (CI/CD) built ahead of Phase 10**
+
+Continuation of the same day's session (see the Phase 9 entry below for what was built earlier). The person tested Phase 8/9 live on a real device and reported issues via screenshots; three separate bugs came out of that, fixed in order:
+
+1. **Home's "N of 12 attempts left today" badge went stale after finishing an attempt**, only correcting itself on a manual page reload. Cause: `summary-home-btn`'s click handler called `showScreen('screen-home')` alone, never re-running the badge fetch. Fix: it now calls `renderHome()` first. The same bug existed on the rarer session-timeout-forfeit path in `attempt.js`; fixed there too (`refreshAttemptsLeftToday` exposed on `window` for that separate closure to call).
+
+2. **A completed attempt could be silently lost and show up as `Forfeited`/score 0 in history**, if the one-shot `score-replay` submission hit a network error. Real score-integrity bug, not cosmetic: `finishAttempt()`/`failAttempt()` stopped the heartbeat immediately, so a failed submission left the attempt's row at `status: in_progress` with a frozen `last_heartbeat_at`, which `forfeit-stale-attempts`'s 5-minute sweep would eventually flip to `forfeited`, discarding a fully-played run. Fix, in `attempt.js`: the heartbeat now stays alive until `submitAttempt()` actually succeeds (confirmed safe — `score-replay` only refuses an attempt already `completed`, never `forfeited`), `submitAttempt()` now auto-retries 3x with backoff before giving up, and a new "Retry saving score" button lets the player retry any time after reconnecting. Also handled the edge case the retry logic itself introduces — a retry landing after an earlier try actually succeeded server-side (response merely lost in transit) now recognizes `score-replay`'s "already submitted" reply instead of treating it as a fresh failure. The two already-lost attempts from before this fix can't be recovered — no move data survives client-side to resubmit — this only prevents it going forward.
+
+3. **Attempt-history rows showed a start time but never an end time.** `completed_at` was already being fetched in the query, just never rendered. Fixed in `attempt-history.js`: finished/forfeited rows now show a `start–end IST` range; still-`in_progress` rows fall back to start-time-only, correctly, since they have no `completed_at` yet.
+
+**Then: Phase 11 (CI/CD) built, out of roadmap order, ahead of Phase 10 (Ads).** Prompted by starting to plan Phase 10 and checking the live repo tree first — `client/android/`, `client/capacitor.config.json`, and `.github/workflows/` didn't exist at all; everything tested so far had only ever been a plain web page via GitHub Pages. `@capacitor-community/admob` is a native plugin with no way to build or test it without a real Capacitor Android project existing, so Phase 11 was done first — flagged explicitly to the person rather than silently reordered; they deferred the call back ("your call").
+
+New files: `client/package.json` (pinned exact `@capacitor/*` versions), `client/capacitor.config.json`, `supabase/config.toml`, `.github/workflows/build-apk.yml`, `.github/workflows/scripts/patch_build_gradle.py`, `.github/workflows/deploy-functions.yml`, root `.gitignore`. Full reasoning — especially *why* `client/android/` is deliberately never committed, and the `verify_jwt` risk the new `supabase/config.toml` closes — is in DECISIONS.md's 2026-09-16 Phase 11 entry; not repeated here.
+
+**Verification done:** the Capacitor scaffold + Gradle patch was run end-to-end in a local sandbox — real `npx cap add android`/`cap sync` against the exact pinned versions being shipped, `patch_build_gradle.py` run against that real generated output and the result inspected by hand, brace-balance/JSON/YAML/TOML syntax all checked.
+**Verification NOT done:** the actual `gradlew assembleRelease` step has never run — no Android SDK / Google Maven access in the sandbox used to build this. **Next session should start by watching the first live run of `build-apk.yml` after these files are committed, and be ready to iterate on the Gradle/Android SDK setup from whatever the Actions log shows** — some amount of back-and-forth here is expected and normal for a first native CI build, not a sign the approach is wrong.
+
+---
+
 **2026-09-16 — Phase 9 (All-time stats & calendar) built**
 
 Started from the Phase 8 handoff point. Read ROADMAP.md, the last SESSIONS.md entry, DECISIONS.md, and ARCHITECTURE.md in full, then confirmed the schema/RLS picture directly against the live repo before writing anything: `record_attempt_start` (added during Phase 7) already writes to `user_year_activity` on every attempt start, so the calendar's data source is already populated — no new migration or Postgres function needed for this phase.
