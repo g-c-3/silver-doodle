@@ -110,6 +110,15 @@ jobs:
           # if this file exists and is non-empty (Capacitor's own generated
           # try/catch) -- so this is enough on its own, no further wiring.
 
+      - name: Register the auth-callback deep link
+        # Adds the matchemojisdaily://auth-callback custom-scheme
+        # intent-filter to the generated AndroidManifest.xml -- see
+        # patch_android_manifest.py and client/src/js/deep-link.js for why
+        # this exists: without it, sign-in started inside the app can never
+        # complete, since the magic-link email always opens in the system
+        # browser (a different origin than the app's own WebView).
+        run: python3 .github/workflows/scripts/patch_android_manifest.py
+
       - name: Configure release signing & bump version
         run: python3 .github/workflows/scripts/patch_build_gradle.py
 
