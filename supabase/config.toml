@@ -1,0 +1,26 @@
+# Match Emojis Daily — Supabase Edge Functions config (Phase 11)
+#
+# Only declares what needs to differ from Supabase's defaults. By default
+# every function requires a valid user JWT in Authorization (verify_jwt =
+# true) -- correct for start-attempt / score-replay / attempt-heartbeat /
+# leaderboard, which are only ever called by the signed-in client via
+# supabase.functions.invoke().
+#
+# forfeit-stale-attempts and generate-daily-games are different: they're
+# invoked only by Supabase's own Cron scheduler (pg_cron/pg_net), never by
+# the client, and send no Authorization header at all -- see each
+# function's own header comment. JWT verification for both was switched
+# off manually in the Dashboard when they were first deployed there
+# (Phase 8), before this file existed. This file makes that setting
+# explicit and reproducible so deploy-functions.yml's CLI-based deploy
+# can't silently reset it back to the platform default and break the
+# cron path -- without it, the very first CI-driven redeploy of either
+# function would start rejecting Supabase's own cron calls with a 401,
+# silently breaking daily game generation and stale-attempt cleanup.
+project_id = "wgkcxixocfzydawurluh"
+
+[functions.forfeit-stale-attempts]
+verify_jwt = false
+
+[functions.generate-daily-games]
+verify_jwt = false
