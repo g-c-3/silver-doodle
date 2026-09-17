@@ -1,0 +1,50 @@
+name: Deploy Supabase Edge Functions
+
+# Phase 11. The Supabase CLI's functions deploy command expects functions
+# under supabase/functions/ by convention; this repo keeps them under
+# server/functions/ instead (docs/ARCHITECTURE.md's repo layout, chosen so
+# server/ reads as "backend code" independent of any one vendor's CLI
+# conventions). Rather than restructure the repo around the CLI, this
+# workflow stages a copy into supabase/functions/ at deploy time only --
+# server/functions/ stays the one source of truth that's actually edited.
+#
+# supabase/config.toml pins verify_jwt = false for forfeit-stale-attempts
+# and generate-daily-games explicitly -- see that file's own comment for
+# why this matters and shouldn't be removed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/functions/**"
+      - "supabase/config.toml"
+      - ".github/workflows/deploy-functions.yml"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Stage functions where the CLI expects them
+        run: |
+          mkdir -p supabase/functions
+          cp -r server/functions/. supabase/functions/
+
+      - name: Deploy all Edge Functions
+        # --use-api skips Docker entirely (not available on this runner
+        # anyway) and deploys every function found under supabase/functions/
+        # in one call -- no need to name them individually here, so a new
+        # function folder under server/functions/ is picked up automatically
+        # next time this runs, with no workflow edit required.
+        run: supabase functions deploy --use-api --project-ref "$SUPABASE_PROJECT_REF"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
