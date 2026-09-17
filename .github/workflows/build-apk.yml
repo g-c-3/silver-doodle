@@ -46,9 +46,24 @@ jobs:
         # compileSdk (Capacitor 8.5.2 currently targets 36) can be newer
         # than what's baked into the runner image -- this makes sure it's
         # there rather than hoping. Safe to re-run; no-ops if already present.
+        #
+        # FIXED 2026-09-17, from the first live run's actual log: bare
+        # `sdkmanager` failed with "command not found" (exit 127) -- it's
+        # not on PATH by default on the runner, it lives under
+        # $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/. Calling it by full
+        # path instead of assuming PATH is the fix; falls back to
+        # $ANDROID_HOME in case a future runner image only sets that one.
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-36" "platform-tools" > /dev/null
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "Could not find sdkmanager under \$ANDROID_SDK_ROOT or \$ANDROID_HOME on this runner." >&2
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "platform-tools" > /dev/null
 
       - name: Install Capacitor and scaffold the native Android project
         working-directory: client

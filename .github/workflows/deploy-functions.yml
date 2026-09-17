@@ -44,7 +44,17 @@ jobs:
         # in one call -- no need to name them individually here, so a new
         # function folder under server/functions/ is picked up automatically
         # next time this runs, with no workflow edit required.
+        #
+        # FIXED 2026-09-17, from the first live run's actual log:
+        # SUPABASE_PROJECT_REF resolved to an empty string even though
+        # SUPABASE_ACCESS_TOKEN was present (shown masked) -- the secret
+        # either isn't set or was added as a repo Variable rather than a
+        # Secret. The project ref isn't actually sensitive (it's the same
+        # value already committed in supabase/config.toml's project_id and
+        # documented in ARCHITECTURE.md Section 12), so this stops routing
+        # it through a secret at all rather than chasing which tab it was
+        # meant to be added under.
         run: supabase functions deploy --use-api --project-ref "$SUPABASE_PROJECT_REF"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_PROJECT_REF: wgkcxixocfzydawurluh
