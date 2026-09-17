@@ -4,6 +4,28 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Match Emojis Daily</title>
+  <script>
+    // Magic-link deep-link handoff — deliberately the very first thing on
+    // the page, before any other script or even the stylesheet loads, so a
+    // bare-browser landing on the auth callback hands off to the app as
+    // fast as possible. See client/src/js/deep-link.js for the full
+    // reasoning (short version: signInWithOtp()'s PKCE code_verifier lives
+    // in whichever origin started the sign-in, and the emailed link always
+    // opens in the system browser regardless of where that was — so if
+    // sign-in was started inside the app, this handoff isn't just a UX
+    // nicety, it's required for the exchange to be able to succeed at all).
+    // window.Capacitor is injected natively before any page script runs
+    // when actually inside the app, so this check is safe to run here.
+    (function () {
+      if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+        return; // Already inside the app — nothing to hand off.
+      }
+      var hasCode = /[?&]code=/.test(location.search);
+      var hasToken = /access_token=/.test(location.hash);
+      if (!hasCode && !hasToken) return; // Not an auth callback landing — ordinary page load.
+      location.replace('matchemojisdaily://auth-callback' + location.search + location.hash);
+    })();
+  </script>
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
@@ -461,6 +483,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
+  <script src="js/deep-link.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/profile.js"></script>
   <script src="js/leaderboard.js"></script>
