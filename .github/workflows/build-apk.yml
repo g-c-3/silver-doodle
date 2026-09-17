@@ -39,11 +39,16 @@ jobs:
           # default at the time this workflow was first written; bumped.
           node-version: 22
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          # FIXED 2026-09-17, from the third live run's actual log:
+          # capacitor-android's own module (part of @capacitor/android
+          # 8.5.2) compiles against Java 21 source compatibility --
+          # "invalid source release: 21" against JDK 17. AGP 8.13.0 (what
+          # this Capacitor version generates) fully supports JDK 21.
+          java-version: "21"
 
       - name: Ensure required Android SDK packages are installed
         # ubuntu-latest ships a preinstalled Android SDK, but a very recent
