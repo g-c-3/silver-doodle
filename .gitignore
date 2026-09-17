@@ -1,0 +1,17 @@
+# client/android/ is generated fresh by .github/workflows/build-apk.yml on
+# every CI run (see docs/DECISIONS.md, "android/ generated fresh in CI",
+# 2026-09-17) -- it is never meant to be committed.
+client/android/
+client/node_modules/
+client/package-lock.json
+
+# Never commit secrets that a local run might otherwise write next to
+# these -- CI writes and discards its own copies inside client/android/,
+# which is already excluded above, but this covers any local attempt too.
+*.keystore
+*.jks
+google-services.json
+keystore.properties
+
+# OS/editor noise
+.DS_Store
