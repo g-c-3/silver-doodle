@@ -29,10 +29,16 @@ client/
   src/                 game HTML/CSS/JS
     js/game-engine.js  pure match-3 logic (seeded RNG, board, matches, scoring, cascades)
     js/attempt.js      attempt orchestration (forced-sequential slots, lives, bonus trigger, rendering)
+    js/deep-link.js    completes magic-link sign-in inside the native app via a custom URL scheme
+                        handoff — see Section 10
   android/             Capacitor Android project — NOT committed; scaffolded fresh by build-apk.yml
                         on every CI run instead (see DECISIONS.md's 2026-09-16 "android/ generated
                         fresh in CI" entry — the short version: committing it would mean uploading
                         ~50+ generated native files by hand through GitHub's mobile web UI)
+  assets/
+    icon.svg           app icon source (Phase 11) — every density/adaptive-icon variant regenerated
+                        from this by @capacitor/assets on each CI run, same "source committed,
+                        generated output is not" pattern as android/ itself
   capacitor.config.json
   package.json          pinned exact @capacitor/* versions — keeps the CI-generated android/
                          project's shape stable run to run, which patch_build_gradle.py depends on
@@ -45,8 +51,10 @@ supabase/
 .github/workflows/
   build-apk.yml
   deploy-functions.yml
-  scripts/patch_build_gradle.py   injects release signingConfig + versionCode/versionName into the
-                                   CI-generated app/build.gradle (Phase 11)
+  scripts/patch_build_gradle.py     injects release signingConfig + versionCode/versionName into the
+                                     CI-generated app/build.gradle (Phase 11)
+  scripts/patch_android_manifest.py registers the matchemojisdaily://auth-callback deep link on the
+                                     CI-generated AndroidManifest.xml (Phase 11) — see Section 10
 .gitignore
 privacy-policy.html     served via GitHub Pages, required before Google Play submission
 ```
@@ -247,13 +255,21 @@ Per-player all-time stats (days played, total attempts, best day, least day) and
 
 Email + OTP only, via Supabase Auth — no phone verification. Implemented as a tap-the-link confirmation email rather than a typed 6-digit code (see DECISIONS.md Phase 3 "link-flow pivot" block for why) — the link itself is the one-time-use token. Only name and email are collected at signup; no other personal data. Name and email are editable later; an email change requires tapping a confirmation link sent to the new address. No minimum age gate (see DECISIONS.md for the associated open DPDP risk note).
 
+**Native-app handoff (Phase 11, 2026-09-17).** `signInWithOtp()` uses Supabase's PKCE flow by default, whose `code_verifier` is stored in whichever origin actually made the request. The emailed link always opens in the system browser — a different origin than the Capacitor app's own WebView — so when sign-in was started inside the app, the code exchange can only succeed if it's routed back into the app, not left in that browser tab (see DECISIONS.md for the full reasoning, including why Android App Links wasn't used instead). Two pieces:
+- `index.html`'s inline handoff (`#auth-handoff-overlay`, near the top of `<body>`): detects a bare-browser landing on the callback (`code=` or `access_token=` present) and shows a tappable "Open Match Emojis Daily" link to `matchemojisdaily://auth-callback...`. Deliberately a real tap, not an automatic redirect — browsers require a genuine user gesture to hand off to a custom URL scheme (see DECISIONS.md; an automatic-redirect version of this was tried first and got stuck on a blank page). `app.js`'s own routing is skipped entirely while this is showing (`window.__authHandoffPending` guard), so nothing else tries to draw underneath the fixed-position overlay.
+- `client/src/js/deep-link.js`: runs only inside the native app. Catches the handoff via `@capacitor/app`'s `appUrlOpen` (app already running) and `getLaunchUrl()` (cold start), and completes the exchange with the app's own Supabase client — the same origin the request started from, so the stored `code_verifier` actually matches.
+
+The custom scheme is registered on `MainActivity` by `.github/workflows/scripts/patch_android_manifest.py`, injected into the CI-generated `AndroidManifest.xml` the same way release signing is (Section 11) — `client/android/` isn't committed, so this can't live in a checked-in manifest file.
+
 ## 11. CI/CD
 
-Built 2026-09-16, out of roadmap order ahead of Phase 10 (Ads) — see DECISIONS.md's 2026-09-16 sequencing entry for why. **Not yet confirmed against a live GitHub Actions run** — see the same DECISIONS.md entry for exactly what was and wasn't verified before delivery.
+Built 2026-09-16, out of roadmap order ahead of Phase 10 (Ads) — see DECISIONS.md's 2026-09-16 sequencing entry for why. **Confirmed fully working against live GitHub Actions runs as of 2026-09-17** — both workflows green end to end, a signed APK installs and runs.
 
-**`build-apk.yml`.** `client/android/` is not committed (see Section 2) — this workflow is the only place it's ever created. Per run: scaffolds it fresh via the pinned-version `@capacitor/cli` (`npx cap add android && npx cap sync android`), decodes `ANDROID_KEYSTORE_BASE64` into a keystore file and writes `client/android/keystore.properties` alongside it from `ANDROID_KEYSTORE_PASSWORD`/`ANDROID_KEY_ALIAS`/`ANDROID_KEY_PASSWORD` (the keystore is PKCS12, which doesn't support separate store/key passwords, so those two secrets hold the same value), writes `GOOGLE_SERVICES_JSON` out to `client/android/app/google-services.json` (Capacitor's generated `app/build.gradle` only applies the `google-services` Gradle plugin if this file exists and is non-empty, so nothing further needs wiring for that), then runs `.github/workflows/scripts/patch_build_gradle.py` to add a release `signingConfig` reading that `keystore.properties` and to bump `versionCode`/`versionName` from `github.run_number`, before `gradlew assembleRelease`. The resulting APK is uploaded both as a workflow artifact and attached to a GitHub Release (marked prerelease — distribution is manual sideload only until Phase 12).
+**`build-apk.yml`.** `client/android/` is not committed (see Section 2) — this workflow is the only place it's ever created. Per run: scaffolds it fresh via the pinned-version `@capacitor/cli` (`npx cap add android && npx cap sync android`), generates the app icon from `client/assets/icon.svg` via `@capacitor/assets` (Section 2), decodes `ANDROID_KEYSTORE_BASE64` into a keystore file and writes `client/android/keystore.properties` alongside it from `ANDROID_KEYSTORE_PASSWORD`/`ANDROID_KEY_ALIAS`/`ANDROID_KEY_PASSWORD` (the keystore is PKCS12, which doesn't support separate store/key passwords, so those two secrets hold the same value), writes `GOOGLE_SERVICES_JSON` out to `client/android/app/google-services.json` (Capacitor's generated `app/build.gradle` only applies the `google-services` Gradle plugin if this file exists and is non-empty, so nothing further needs wiring for that), registers the auth-callback deep link via `.github/workflows/scripts/patch_android_manifest.py` (Section 10), then runs `.github/workflows/scripts/patch_build_gradle.py` to add a release `signingConfig` reading that `keystore.properties` and to bump `versionCode`/`versionName` from `github.run_number`, before `gradlew assembleRelease`. The resulting APK is uploaded both as a workflow artifact and attached to a GitHub Release (marked prerelease — distribution is manual sideload only until Phase 12).
 
-**`deploy-functions.yml`.** Triggers on push to `server/functions/**`. The Supabase CLI expects functions under `supabase/functions/`, which this repo deliberately doesn't use as a real directory (Section 2) — the workflow stages a copy there at deploy time only, then runs `supabase functions deploy --use-api --project-ref "$SUPABASE_PROJECT_REF"` (Docker-free; deploys every function found, no need to name them individually) using `SUPABASE_ACCESS_TOKEN`.
+Runner specifics that weren't obvious until a real run failed on them, in case they need revisiting on a future runner-image update: `sdkmanager` isn't on `PATH`, call it via `$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager`; `@capacitor/cli@8.5.2` requires Node ≥22; `capacitor-android`'s own module needs JDK 21 (not 17); attaching a GitHub Release needs an explicit `permissions: contents: write` block (the default `GITHUB_TOKEN` only gets `contents: read`).
+
+**`deploy-functions.yml`.** Triggers on push to `server/functions/**`. The Supabase CLI expects functions under `supabase/functions/`, which this repo deliberately doesn't use as a real directory (Section 2) — the workflow stages a copy there at deploy time only, then runs `supabase functions deploy --use-api --project-ref "$SUPABASE_PROJECT_REF"` (Docker-free; deploys every function found, no need to name them individually) using `SUPABASE_ACCESS_TOKEN`. `SUPABASE_PROJECT_REF` is a plain literal in the workflow, not a secret (see DECISIONS.md) — it's the same non-sensitive value as `supabase/config.toml`'s `project_id` and Section 12 below.
 
 **`supabase/config.toml`.** Pins `verify_jwt = false` explicitly for `forfeit-stale-attempts` and `generate-daily-games` — both cron-only, both previously relying on a Dashboard-only toggle a CLI deploy could otherwise have silently reset. See DECISIONS.md for why this matters.
 
