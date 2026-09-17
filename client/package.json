@@ -1,0 +1,15 @@
+{
+  "name": "match-emojis-daily-client",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Match Emojis Daily — Capacitor wrapper around client/src for the Android build.",
+  "scripts": {
+    "android:add": "cap add android",
+    "android:sync": "cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/cli": "8.5.2",
+    "@capacitor/core": "8.5.2"
+  }
+}
