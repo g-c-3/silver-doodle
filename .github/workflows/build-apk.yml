@@ -1,0 +1,119 @@
+name: Build Android APK
+
+# Phase 11. client/android/ is intentionally NOT committed to this repo --
+# see docs/DECISIONS.md's "android/ generated fresh in CI" entry
+# (2026-09-17) for why. This workflow regenerates it from scratch on every
+# run using the real @capacitor/cli (pinned exact versions in
+# client/package.json, so the generated template's shape stays stable run
+# to run -- see .github/workflows/scripts/patch_build_gradle.py, which
+# depends on that), then injects the Phase 1 secrets (signing keystore,
+# Firebase config) into that freshly-generated project before building.
+#
+# Never run any of these steps locally -- this workflow is the only
+# supported way to produce an APK. See docs/ROADMAP.md and
+# docs/ARCHITECTURE.md Section 11 for the reasoning.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "client/**"
+      - "supabase/migrations/**" # schema the client depends on shifting is a reason to rebuild too
+      - ".github/workflows/build-apk.yml"
+      - ".github/workflows/scripts/patch_build_gradle.py"
+  workflow_dispatch: {} # manual trigger from the Actions tab, for a rebuild with no code change (e.g. after rotating a secret)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Ensure required Android SDK packages are installed
+        # ubuntu-latest ships a preinstalled Android SDK, but a very recent
+        # compileSdk (Capacitor 8.5.2 currently targets 36) can be newer
+        # than what's baked into the runner image -- this makes sure it's
+        # there rather than hoping. Safe to re-run; no-ops if already present.
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-36" "platform-tools" > /dev/null
+
+      - name: Install Capacitor and scaffold the native Android project
+        working-directory: client
+        run: |
+          npm install
+          npx cap add android
+          npx cap sync android
+
+      - name: Decode release keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > client/android/release.keystore
+          cat > client/android/keystore.properties << KEOF
+          storeFile=release.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEOF
+          # Never echoed and never committed -- both files live only in this
+          # ephemeral runner workspace and vanish when the job ends.
+
+      - name: Write Firebase config
+        run: |
+          cat > client/android/app/google-services.json << 'GSJSON'
+          ${{ secrets.GOOGLE_SERVICES_JSON }}
+          GSJSON
+          # app/build.gradle only applies the google-services Gradle plugin
+          # if this file exists and is non-empty (Capacitor's own generated
+          # try/catch) -- so this is enough on its own, no further wiring.
+
+      - name: Configure release signing & bump version
+        run: python3 .github/workflows/scripts/patch_build_gradle.py
+
+      - name: Build release APK
+        working-directory: client/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Locate the built APK
+        id: apk
+        run: |
+          apk_path=$(find client/android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$apk_path" ]; then
+            echo "No APK found under app/build/outputs/apk/release -- build must have failed silently." >&2
+            exit 1
+          fi
+          echo "path=$apk_path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: match-emojis-daily-build-${{ github.run_number }}
+          path: ${{ steps.apk.outputs.path }}
+          retention-days: 30
+
+      - name: Attach APK to a GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          # Distribution is manual APK sideload for now (docs/ROADMAP.md
+          # Phase 12 gates Play Store submission on the privacy policy page
+          # and production ad unit IDs) -- prerelease keeps every build out
+          # of the repo's "Latest release" banner until that's ready.
+          prerelease: true
+          files: ${{ steps.apk.outputs.path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
