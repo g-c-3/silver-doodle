@@ -33,7 +33,11 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # FIXED 2026-09-17, from the second live run's actual log:
+          # @capacitor/cli@8.5.2 refuses to run at all below Node 22
+          # ("The Capacitor CLI requires NodeJS >=22.0.0"). 20 was the LTS
+          # default at the time this workflow was first written; bumped.
+          node-version: 22
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
