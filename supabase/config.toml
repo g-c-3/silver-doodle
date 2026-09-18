@@ -17,10 +17,20 @@
 # cron path -- without it, the very first CI-driven redeploy of either
 # function would start rejecting Supabase's own cron calls with a 401,
 # silently breaking daily game generation and stale-attempt cleanup.
+#
+# admob-ssv (Phase 10) is a third case in the same category: it's called
+# directly by Google's AdMob servers as a server-to-server callback, which
+# carries no Supabase Authorization header either. See that function's own
+# header comment for how it authenticates the caller instead (a
+# cryptographic signature over the callback's own query parameters, not a
+# Supabase JWT).
 project_id = "wgkcxixocfzydawurluh"
 
 [functions.forfeit-stale-attempts]
 verify_jwt = false
 
 [functions.generate-daily-games]
+verify_jwt = false
+
+[functions.admob-ssv]
 verify_jwt = false
