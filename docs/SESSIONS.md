@@ -4,6 +4,22 @@ Most recent entry first.
 
 ---
 
+**2026-09-18 (later same day) — Phase 10 bug found and fixed via a real AdMob test callback: SSV signature was DER, code assumed raw**
+
+Continuation of the same day's Phase 10 session — the deploy-timing "could not reach the server" symptom from earlier resolved itself once `deploy-functions.yml` finished (confirmed live via Supabase's function tester: `admob-ssv` correctly 405s a POST, `score-replay` correctly 401s an unauthenticated POST, both proving deployment).
+
+AdMob's own "Verify callback URL" flow — not a separately-labeled "Send test callback" button, which doesn't exist in the current console UI — turned out to be the real signed-callback test: entering a URL there and tapping "Verify url" fires an actual Google-signed GET at the endpoint. First run of that produced a real, confirmed bug: `admob-ssv`'s Logs showed `"admob-ssv: signature did NOT verify for transaction_id 123456789."`.
+
+**Cause:** `admob-ssv/index.ts` assumed Google's SSV `signature` parameter was already a raw, fixed-width IEEE-P1363 (`r‖s`) ECDSA signature — the format WebCrypto's `crypto.subtle.verify()` requires — and passed it straight through. Google's own reference implementation (`developers.google.com/admob/ios/ssv`'s manual-verification section) explicitly verifies with `EcdsaEncoding.DER`: the signature is actually a DER-encoded ASN.1 SEQUENCE of two INTEGERs. Handing WebCrypto a DER blob where it expects raw `r‖s` doesn't throw — it just always returns `false`, which is exactly the symptom seen.
+
+**Fix:** added `derSignatureToRaw()` — parses the DER SEQUENCE/INTEGER structure, strips each INTEGER's optional sign-avoidance `0x00` padding byte, and left-pads each of `r`/`s` to 32 bytes — and verifies the converted signature instead of the raw callback bytes.
+
+**Why correct, checked before shipping rather than guessed:** reproduced the exact bug locally first — Node's `crypto.sign()` for EC keys produces DER by default (same encoding Google uses), and verifying that raw DER blob with WebCrypto's `ECDSA` verify reliably returned `false`, matching the live failure. Converting it with `derSignatureToRaw()` first made the same verification return `true`. Then ran a second, fuller simulation: built a realistic callback URL with Google's actual documented parameter set and ordering, signed it exactly as `admob-ssv` will receive it, and ran it through the function's own message-extraction and verification logic end to end — confirmed the extracted message matches the signed content byte-for-byte and the signature verifies. Not deployed from that simulation alone, though — this still needs a second real "Verify url" test against the redeployed function before Phase 10 can be marked working end to end.
+
+**Next session start point:** deploy this fix (`server/functions/admob-ssv/index.ts` REPLACE, below), then repeat the "Verify url" test in the AdMob console and check `admob-ssv`'s Logs again. Expect either `"Verified and recorded."` (if a real attemptId/slotIndex was entered as test custom_data) or `"admob-ssv: unknown attemptId..."` (if custom_data was left blank/didn't match a real attempt) — either of those means the signature check now passes; anything still saying "signature did NOT verify" would mean this fix itself has a bug and needs a fresh look, not a retry. Once that's clean, resume the deferred steps: a full on-device rewarded-ad watch-through for both the ad-life grant and bonus-round entry.
+
+---
+
 **2026-09-18 — Phase 10 (Ads) built — real AdMob rewarded-ad flow, SSV verification wired to score-replay**
 
 Started per the previous session's own note (confirm the icon/status-bar fix on-device, then move to Phase 10) — the device confirmation is a user-side step this session couldn't do remotely, so proceeded directly to Phase 10 as the next buildable ROADMAP item, flagged explicitly rather than silently skipping the confirmation step.
