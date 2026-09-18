@@ -910,7 +910,19 @@ const Attempt = (() => {
 
   function onPointerDown(r, c, e) {
     if (a.locked) return;
-    a.dragStart = { r, c, x: e.clientX, y: e.clientY };
+    // Multi-touch guard: only ever track ONE gesture at a time. Without
+    // this, a second finger touching down before the first lifts silently
+    // overwrote a.dragStart below, so the eventual pointerup — from
+    // WHICHEVER finger happened to lift first — computed its swipe vector
+    // from one finger's start point and a different finger's release
+    // point. That's a garbage vector, but a dense 8x8/6-symbol board (see
+    // docs/DECISIONS.md) still resolves a lot of garbage vectors into a
+    // valid adjacent swap, which is exactly what looked like "blind
+    // swiping anywhere clears levels" — confirmed against a real screen
+    // recording, not assumed. Extra fingers are now ignored outright: the
+    // gesture already in progress owns input until it ends.
+    if (a.dragStart && a.dragStart.pointerId !== e.pointerId) return;
+    a.dragStart = { r, c, x: e.clientX, y: e.clientY, pointerId: e.pointerId };
   }
 
   // Registered once on the document, not per-cell — a swipe released
@@ -918,6 +930,7 @@ const Attempt = (() => {
   // never fire and leave a.dragStart stale, corrupting the next touch.
   document.addEventListener('pointerup', (e) => {
     if (!a || a.locked || !a.dragStart) return;
+    if (e.pointerId !== a.dragStart.pointerId) return; // not the finger that started this gesture — ignore
     const start = a.dragStart;
     a.dragStart = null;
     const dx = e.clientX - start.x;
@@ -946,6 +959,19 @@ const Attempt = (() => {
 
     // Tap: fall back to the original select-then-tap-adjacent flow.
     handleTap(start.r, start.c);
+  });
+
+  // A gesture can end without ever firing pointerup — Android delivers
+  // pointercancel instead if e.g. a system gesture (notification shade,
+  // back-swipe) takes over mid-touch. Without handling this, a.dragStart
+  // would stay stuck holding that pointerId forever, permanently locking
+  // out all future input (every new finger would fail the ownership check
+  // above and be silently ignored) until the level ends and a.dragStart is
+  // reset elsewhere.
+  document.addEventListener('pointercancel', (e) => {
+    if (a && a.dragStart && a.dragStart.pointerId === e.pointerId) {
+      a.dragStart = null;
+    }
   });
 
   function handleTap(r, c) {
