@@ -16,29 +16,27 @@
 // a row here written by *this* function, score-replay rejects the attempt.
 //
 // SIGNATURE VERIFICATION, per Google's documented SSV algorithm
-// (https://support.google.com/admob/answer/9603226):
-//   1. Google signs every query parameter that appears BEFORE `signature`
-//      in the callback URL, in the order they appear, as the literal query
-//      string bytes (not a re-serialized/sorted version of them) — so the
-//      message to verify is exactly the substring of the URL's query string
-//      up to (not including) the `signature=` parameter.
-//   2. The signature itself is ECDSA (P-256, SHA-256) over that message,
-//      base64url-encoded.
+// (https://developers.google.com/admob/ios/ssv#manual_verification_of_rewarded_ssv):
+//   1. The last two query parameters of every callback are always
+//      `signature` then `key_id`, in that order — everything before them is
+//      the exact byte content that was signed (the raw query-string
+//      substring up to, not including, `signature=`).
+//   2. The signature itself is ECDSA (P-256, SHA-256), **DER-encoded**
+//      (Google's own reference code verifies it with `EcdsaEncoding.DER`)
+//      and then base64url-encoded for the URL.
 //   3. The public key to verify against is selected by the `key_id`
 //      parameter from Google's published, rotating key set at
 //      https://www.gstatic.com/admob/reward/verifier-keys.json.
 //
-// NOT YET VERIFIED AGAINST A REAL CALLBACK: this was implemented directly
-// from Google's documented algorithm, not exercised against an actual
-// signed SSV ping from Google's servers (this sandbox has no way to
-// generate one). Before trusting this in production: deploy, set this
-// function's URL as the SSV callback URL for both the Rewarded ad unit in
-// the AdMob console (Ad units > [Rewarded unit] > Server-side verification
-// > Callback URL), and use AdMob's console "Send test callback" feature
-// (Server-side verification screen has this button) to fire one real
-// signed callback at it, then check this function's Logs for a
-// "verified" / rejection entry. See docs/SESSIONS.md's latest entry for
-// this as an explicit next-session step.
+// CONFIRMED against a real signed test callback (2026-09-18, AdMob's
+// "Verify callback URL" flow) that this function's FIRST version had a real
+// bug here: WebCrypto's `crypto.subtle.verify({name:'ECDSA',...})` expects a
+// raw, fixed-width IEEE-P1363 r‖s signature, not the DER (ASN.1 SEQUENCE of
+// two INTEGERs) signature Google actually sends — every real callback was
+// failing verification. derSignatureToRaw() below converts DER to the raw format
+// WebCrypto needs; reproduced the exact failure and the fix locally with
+// Node's crypto module (DER by default) against WebCrypto's verify before
+// shipping this, rather than guessing the fix was right.
 //
 // verify_jwt is set to false for this function in supabase/config.toml —
 // AdMob's callback carries no Supabase Authorization header at all, same
@@ -81,17 +79,54 @@ async function importGoogleKey(base64Der: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('spki', der, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
 }
 
-// DER-encoded ECDSA signatures (ASN.1 SEQUENCE of two INTEGERs) are what
-// WebCrypto's ECDSA verify expects to be handed as a raw (r||s) IEEE P1363
-// signature instead — Google's SSV signatures are already raw r||s
-// (64 bytes for P-256), not DER, per the documented format, so no
-// conversion is needed here. Flagged in case a future signature fails to
-// verify and this assumption needs revisiting.
+// DER-encoded ECDSA signatures are an ASN.1 SEQUENCE of two INTEGERs (r and
+// s), each optionally prefixed with a 0x00 padding byte when its own high
+// bit is set (so it isn't misread as a negative INTEGER) — this decodes
+// that structure and produces the fixed-width 64-byte raw r‖s format
+// WebCrypto's ECDSA verify requires for a P-256 key (32 bytes per
+// component, zero-padded on the left if DER's minimal encoding trimmed
+// leading zero bytes that aren't the sign-avoidance padding byte).
+function derSignatureToRaw(der: Uint8Array, componentLen = 32): Uint8Array {
+  let offset = 0;
+  if (der[offset++] !== 0x30) throw new Error('derSignatureToRaw: expected SEQUENCE (0x30) tag.');
+  let seqLen = der[offset++];
+  if (seqLen & 0x80) {
+    const n = seqLen & 0x7f;
+    seqLen = 0;
+    for (let i = 0; i < n; i++) seqLen = (seqLen << 8) | der[offset++];
+  }
+  const readInteger = (): Uint8Array => {
+    if (der[offset++] !== 0x02) throw new Error('derSignatureToRaw: expected INTEGER (0x02) tag.');
+    let len = der[offset++];
+    if (len & 0x80) {
+      const n = len & 0x7f;
+      len = 0;
+      for (let i = 0; i < n; i++) len = (len << 8) | der[offset++];
+    }
+    let bytes = der.slice(offset, offset + len);
+    offset += len;
+    while (bytes.length > componentLen && bytes[0] === 0x00) bytes = bytes.slice(1);
+    if (bytes.length < componentLen) {
+      const padded = new Uint8Array(componentLen);
+      padded.set(bytes, componentLen - bytes.length);
+      bytes = padded;
+    }
+    return bytes;
+  };
+  const r = readInteger();
+  const s = readInteger();
+  const raw = new Uint8Array(componentLen * 2);
+  raw.set(r, 0);
+  raw.set(s, componentLen);
+  return raw;
+}
+
 async function verifySignature(keyBase64: string, message: string, signatureB64url: string): Promise<boolean> {
   const key = await importGoogleKey(keyBase64);
-  const sig = base64UrlToUint8Array(signatureB64url);
+  const derSig = base64UrlToUint8Array(signatureB64url);
+  const rawSig = derSignatureToRaw(derSig);
   const msgBytes = new TextEncoder().encode(message);
-  return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, sig, msgBytes);
+  return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, rawSig, msgBytes);
 }
 
 Deno.serve(async (req: Request) => {
