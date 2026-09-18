@@ -40,6 +40,17 @@
 // time-bonus figure within its own level's budget — it can never fabricate
 // points, extra lives, extra levels, or an inflated move count, which is
 // what actually matters for score and rank.
+//
+// PHASE 10 UPDATE: adLifeUsed and isBonus are no longer trusted as bare
+// client-reported booleans. Every level claiming either now requires a
+// matching row in ad_verifications (attempt_id, slot_index, ad_type) —
+// written only by admob-ssv/index.ts after independently verifying a
+// signed server-to-server callback from Google's own AdMob infrastructure.
+// A modified client can still set adLifeUsed/isBonus to whatever it wants
+// in its own payload, but without a real, independently-verified ad
+// completion recorded against this exact attempt+slot+type, replay now
+// rejects the level outright. See docs/ARCHITECTURE.md Section 5 and
+// admob-ssv/index.ts's own header comment for the verification mechanism.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -372,7 +383,18 @@ function fail(error: string): ReplayResult {
 // slot boards (fetched from daily_game_definition_slots by the caller) —
 // this function never generates a regular level's board itself, only
 // bonus-round boards (which aren't pre-stored, see file header).
-function replayAttempt(gameDefinitionId: string, boardsBySlotIndex: Map<number, Board>, levels: LevelPayload[]): ReplayResult {
+//
+// verifiedAdSlots holds one entry per row this attempt actually has in
+// ad_verifications (Phase 10), keyed `${slotIndex}:${adType}` — fetched
+// once by the caller as a single query rather than queried per-level here,
+// since an attempt has at most 26+ levels and there's no reason to round-
+// trip the database that many times for a lookup this small.
+function replayAttempt(
+  gameDefinitionId: string,
+  boardsBySlotIndex: Map<number, Board>,
+  levels: LevelPayload[],
+  verifiedAdSlots: Set<string>
+): ReplayResult {
   if (typeof gameDefinitionId !== 'string' || gameDefinitionId.length === 0) {
     return fail('Missing or invalid gameDefinitionId.');
   }
@@ -410,6 +432,17 @@ function replayAttempt(gameDefinitionId: string, boardsBySlotIndex: Map<number, 
     // ever offered once the 3 regular lives are already spent.
     if (adLifeUsed && livesPoolUsed + livesUsedThisLevel < STARTING_LIVES) {
       return fail(`Level ${i}: ad-life used before the regular life pool was exhausted.`);
+    }
+    // PHASE 10: adLifeUsed/isBonus are never trusted as bare booleans — both
+    // require a matching admob-ssv-verified row for this exact
+    // attempt+slot+type. slotIndex here is the slot about to be played
+    // (not yet incremented past this iteration), matching the slotIndex
+    // client/src/js/attempt.js's playRewardedAd() sets as SSV customData.
+    if (adLifeUsed && !verifiedAdSlots.has(`${slotIndex}:life`)) {
+      return fail(`Level ${i}: adLifeUsed claimed but no verified ad completion found for this attempt/slot.`);
+    }
+    if (lvl.isBonus && !verifiedAdSlots.has(`${slotIndex}:bonus`)) {
+      return fail(`Level ${i}: bonus round entered but no verified ad completion found for this attempt/slot.`);
     }
 
     // Starting board + rng source must match client/src/js/attempt.js's
@@ -598,7 +631,21 @@ Deno.serve(async (req: Request) => {
   const boardsBySlotIndex = new Map<number, Board>();
   slotsResult.data.forEach((row) => boardsBySlotIndex.set(row.slot_index, row.board_pattern as Board));
 
-  const result = replayAttempt(gameDefinitionId, boardsBySlotIndex, body.levels ?? []);
+  // PHASE 10: every ad_verifications row admob-ssv has recorded for this
+  // attempt, as a single query — replayAttempt() only ever needs O(1)
+  // membership checks against this, not a per-level round trip.
+  const adVerificationsResult = await admin
+    .from('ad_verifications')
+    .select('slot_index, ad_type')
+    .eq('attempt_id', body.attemptId);
+  if (adVerificationsResult.error) {
+    return new Response(JSON.stringify(fail('Could not load ad-verification records for this attempt.')), { status: 500, headers: CORS_HEADERS });
+  }
+  const verifiedAdSlots = new Set<string>(
+    (adVerificationsResult.data ?? []).map((row) => `${row.slot_index}:${row.ad_type}`)
+  );
+
+  const result = replayAttempt(gameDefinitionId, boardsBySlotIndex, body.levels ?? [], verifiedAdSlots);
 
   if (result.valid) {
     // Persistence (closes the Phase 5 "not yet done" gap now that Phase 6
