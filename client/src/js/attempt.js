@@ -42,11 +42,14 @@
 // figures. See docs/ARCHITECTURE.md Section 5 and server/functions/
 // score-replay/index.ts for the payload contract and replay logic.
 //
-// KNOWN GAP: score-replay/index.ts has not yet been updated to accept this
-// new attemptId/gameDefinitionId payload shape or to fetch stored board data
-// — it still expects the old {seed, levels} shape from before Phase 6. This
-// is the very next thing to fix; attempt.js's half of the wiring is done,
-// score-replay's half isn't yet. See docs/SESSIONS.md's latest entry.
+// PHASE 10 (ads): offerAdLife()'s ad button and acceptBonus() now call
+// playRewardedAd(), a real AdMob rewarded-video flow (not a dev stub) via
+// window.Capacitor.Plugins.AdMob, with ssv.customData set to
+// `${attemptId}:${slotIndex}:life|bonus`. The reward the client sees here
+// is purely a UX signal, never trusted for scoring — score-replay/index.ts
+// independently requires a matching row in ad_verifications, written only
+// by admob-ssv/index.ts after verifying Google's own signed server-to-
+// server callback. See docs/ARCHITECTURE.md Section 5.
 
 const Attempt = (() => {
   const SLOT_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
@@ -101,6 +104,11 @@ const Attempt = (() => {
   const SWIPE_THRESHOLD_PX = 18; // pointer movement below this is treated as a tap, not a swipe
   const HINT_IDLE_MS = 5000; // no successful move for this long -> highlight all available moves
   const HEARTBEAT_INTERVAL_MS = 20000; // proves liveness to the Phase 8 forfeit-detection sweep
+
+  // Phase 1's registered AdMob Rewarded ad unit (docs/ARCHITECTURE.md
+  // Section 12) — usable for development as-is; Phase 12 swaps to a
+  // separate production unit ID, not this constant, when that phase lands.
+  const ADMOB_REWARDED_AD_UNIT_ID = 'ca-app-pub-6922359485200410/1441491988';
 
   let a = null; // current attempt state
   let selectedCell = null; // [r,c] or null — used by the tap-tap flow only
@@ -423,6 +431,82 @@ const Attempt = (() => {
     failAttempt();
   }
 
+  // ---- Phase 10: real AdMob rewarded-video flow ----
+  //
+  // Requests and shows a rewarded ad for the given `type` ('life' or
+  // 'bonus'), tagging the request with ssv.customData =
+  // `${attemptId}:${slotIndex}:${type}` and ssv.userId = the signed-in
+  // player's id, so Google's AdMob servers include both in the signed
+  // server-side-verification callback admob-ssv/index.ts receives directly
+  // — see that function's header comment. Resolves with the reward info
+  // once the player actually earns the reward; rejects on any failure
+  // (not native, no ad available, load failure, or the player closing the
+  // ad before finishing it).
+  //
+  // IMPORTANT, confirmed by reading the plugin's own native Android source
+  // (com.getcapacitor.community.admob's RewardedAdCallbackAndListeners.kt)
+  // before writing this: showRewardVideoAd()'s own promise ONLY ever
+  // settles by resolving, exactly once the reward is earned — it does NOT
+  // reject if the player closes the ad early without finishing it. Left as
+  // just `await AdMob.showRewardVideoAd()`, a player backing out of an ad
+  // would leave this function (and the caller's UI) hung forever. The
+  // Dismissed listener below is what actually catches that case — it's not
+  // just cleanup, it's load-bearing.
+  async function playRewardedAd(type) {
+    if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) {
+      throw new Error('Ads are only available in the installed app.');
+    }
+    const AdMob = window.Capacitor.Plugins && window.Capacitor.Plugins.AdMob;
+    if (!AdMob) throw new Error('AdMob plugin not available.');
+
+    const {
+      data: { user },
+    } = await window.db.auth.getUser();
+    if (!user) throw new Error('Not signed in.');
+
+    const customData = `${a.attemptId}:${a.slotIndex}:${type}`;
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let dismissHandle = null;
+      let failHandle = null;
+
+      const cleanup = () => {
+        if (dismissHandle) dismissHandle.remove();
+        if (failHandle) failHandle.remove();
+      };
+      const settleReject = (err) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String((err && err.message) || err || 'Ad failed.')));
+      };
+      const settleResolve = (reward) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(reward);
+      };
+
+      Promise.all([
+        AdMob.addListener('onRewardedVideoAdDismissed', () => settleReject(new Error('Ad closed before finishing.'))),
+        AdMob.addListener('onRewardedVideoAdFailedToShow', (err) => settleReject(err)),
+      ])
+        .then(([dHandle, fHandle]) => {
+          dismissHandle = dHandle;
+          failHandle = fHandle;
+        })
+        .catch(() => {
+          /* listener registration itself failing shouldn't block the ad attempt below */
+        });
+
+      AdMob.prepareRewardVideoAd({ adId: ADMOB_REWARDED_AD_UNIT_ID, ssv: { userId: user.id, customData } })
+        .then(() => AdMob.showRewardVideoAd())
+        .then((reward) => settleResolve(reward))
+        .catch((err) => settleReject(err));
+    });
+  }
+
   function offerAdLife() {
     // Blocks play until the player picks an option below — without this,
     // the board (still on screen-game underneath this prompt) stayed fully
@@ -439,20 +523,41 @@ const Attempt = (() => {
 
     const adBtn = document.createElement('button');
     adBtn.className = 'secondary';
-    adBtn.textContent = 'Watch ad for extra time (dev stub)';
-    adBtn.addEventListener('click', () => {
-      // DEV STUB — Phase 10 replaces this with a real AdMob rewarded-video
-      // flow verified server-side via SSV. Never trust a client "ad
-      // watched" flag once that phase lands.
-      a.adLifeUsedThisLevel = true;
-      a.adLivesUsedInRun++;
-      a.levelElapsedBaseMs += a.currentSegmentMs;
-      a.currentSegmentMs = LIFE_EXTENSION_SECONDS * 1000;
-      setMessage('');
-      showToast(`🎬 Ad watched — +${LIFE_EXTENSION_SECONDS}s`);
-      renderHud();
-      a.locked = false; // re-enable play now that the prompt is resolved
-      extendTimer(LIFE_EXTENSION_SECONDS);
+    adBtn.textContent = 'Watch ad for extra time';
+
+    const errorLine = document.createElement('p');
+    errorLine.className = 'muted';
+    errorLine.style.display = 'none';
+
+    adBtn.addEventListener('click', async () => {
+      adBtn.disabled = true;
+      adBtn.textContent = 'Loading ad…';
+      errorLine.style.display = 'none';
+      try {
+        await playRewardedAd('life');
+        // The reward itself is a UX signal only — score-replay
+        // independently requires admob-ssv to have recorded a verified
+        // completion for this exact attempt+slot+type before it will
+        // credit the level; see docs/ARCHITECTURE.md Section 5.
+        a.adLifeUsedThisLevel = true;
+        a.adLivesUsedInRun++;
+        a.levelElapsedBaseMs += a.currentSegmentMs;
+        a.currentSegmentMs = LIFE_EXTENSION_SECONDS * 1000;
+        setMessage('');
+        showToast(`🎬 Ad watched — +${LIFE_EXTENSION_SECONDS}s`);
+        renderHud();
+        a.locked = false; // re-enable play now that the prompt is resolved
+        extendTimer(LIFE_EXTENSION_SECONDS);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Rewarded ad (life) failed:', err);
+        adBtn.disabled = false;
+        adBtn.textContent = 'Watch ad for extra time';
+        errorLine.textContent = 'Ad didn’t finish — try again, or give up.';
+        errorLine.style.display = '';
+        // a.locked stays true — the board underneath stays non-interactive
+        // until the player picks an option, same as the original lock.
+      }
     });
 
     const giveUpBtn = document.createElement('button');
@@ -462,6 +567,7 @@ const Attempt = (() => {
 
     box.appendChild(adBtn);
     box.appendChild(giveUpBtn);
+    box.appendChild(errorLine);
   }
 
   // Ends the whole attempt immediately — not just the current level. The
@@ -727,13 +833,38 @@ const Attempt = (() => {
   // ---- Bonus prompt ----
 
   function showBonusPrompt() {
+    const btn = el('bonus-play-btn');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.defaultLabel || btn.textContent;
+    }
     window.showScreen('screen-bonus-prompt');
   }
 
-  function acceptBonus() {
-    // DEV STUB — Phase 10 replaces this with a real AdMob rewarded-video
-    // flow, verified server-side, per the score-integrity rule.
-    prepareLevel({ bonus: true });
+  async function acceptBonus() {
+    const btn = el('bonus-play-btn');
+    if (btn) {
+      if (!btn.dataset.defaultLabel) btn.dataset.defaultLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Loading ad…';
+    }
+    try {
+      // The reward itself is a UX signal only — score-replay independently
+      // requires admob-ssv to have recorded a verified completion for this
+      // exact attempt+slot+type before it will credit the bonus level; see
+      // docs/ARCHITECTURE.md Section 5.
+      await playRewardedAd('bonus');
+      prepareLevel({ bonus: true });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Rewarded ad (bonus) failed:', err);
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.defaultLabel;
+      }
+      await window.showAlert('Ad didn’t finish — bonus round skipped this time.', 'error');
+      prepareLevel({ bonus: false });
+    }
   }
 
   function skipBonus() {

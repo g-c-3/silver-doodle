@@ -500,4 +500,22 @@ Auth.onAuthStateChange((event, session) => {
   }
 });
 
+// Phase 10: initializes the Google Mobile Ads SDK once, at startup — a
+// prerequisite for any rewarded-ad call attempt.js makes later
+// (playRewardedAd()). No-ops outside the native app (e.g. this same file
+// testing as a plain page via GitHub Pages, which has no AdMob plugin to
+// initialize); attempt.js's playRewardedAd() already checks
+// isNativePlatform() itself before calling anything on the plugin, so a
+// skipped initialize() here can't leave that code confused about why the
+// plugin isn't there.
+if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+  const AdMob = window.Capacitor.Plugins && window.Capacitor.Plugins.AdMob;
+  if (AdMob) {
+    AdMob.initialize().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('AdMob initialize() failed:', err);
+    });
+  }
+}
+
 showScreen('screen-loading');
