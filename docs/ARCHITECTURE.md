@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-14 (Phase 5/6 fully wired — client, score-replay, persistence).
+Last updated: 2026-09-18 (Phase 10 — Ads — implementation complete, not yet deployed or verified live).
 
 ## 1. Stack
 
@@ -44,8 +44,10 @@ client/
                          project's shape stable run to run, which patch_build_gradle.py depends on
 server/
   functions/           Supabase Edge Functions (score replay validation, daily game-definition generation, leaderboard settlement)
+    admob-ssv/         Phase 10 — Google AdMob's server-side-verification callback target; see Section 5
 supabase/
   migrations/           Postgres schema migrations (SQL Editor, run manually — Phase 2 onward)
+                         includes ad_verifications (Phase 10) — server-verified rewarded-ad completions
   config.toml           per-function Edge Function config — currently just pins verify_jwt = false
                          for the two cron-only functions (Phase 11)
 .github/workflows/
@@ -131,11 +133,11 @@ Leftover time is captured per completed level as `sec:milli:micro` and accumulat
 
 ### 3.4 Lives
 
-One shared life pool per attempt, carried across the whole forced-sequential run (not per level, not per free-order session — free level selection was considered and reversed; see DECISIONS.md). One ad-earned life is available per level, gated behind a single rewarded-video ad (reduced from an earlier two-ad design).
+One shared life pool per attempt, carried across the whole forced-sequential run (not per level, not per free-order session — free level selection was considered and reversed; see DECISIONS.md). One ad-earned life is available per level, gated behind a single rewarded-video ad (reduced from an earlier two-ad design). As of Phase 10, this is a real AdMob rewarded ad, server-verified — see Section 5.
 
 ### 3.5 Bonus levels
 
-Offered as play-or-skip every 3rd completed level, using a mix of emojis from the previous 3 themes. Entry is gated behind a single rewarded-video ad (reduced from an earlier two-ad design).
+Offered as play-or-skip every 3rd completed level, using a mix of emojis from the previous 3 themes. Entry is gated behind a single rewarded-video ad (reduced from an earlier two-ad design). As of Phase 10, this is a real AdMob rewarded ad, server-verified — see Section 5.
 
 ### 3.6 Client implementation values (Phase 4)
 
@@ -148,11 +150,11 @@ These values are not derivable from Section 3.1's scoring/move-target spec alone
 - **On level failure:** once all 3 regular lives are already spent, the player is offered the single ad-earned life for that level (once per level) before the level — and the whole attempt — fails. Failing ends the attempt immediately, at its current `levels_reached`, with status `completed`. The failed level's in-progress score IS committed to the attempt's running total on failure (matching what the live HUD was already showing the player) — only time bonus and `levels_reached` stay excluded, since the level itself was never cleared (Section 3.3; changed 2026-09-15, see DECISIONS.md).
 - **Mandatory theme reveal.** Every level, bonus or not, is preceded by a reveal screen showing its theme name, its 6 (or, for a bonus round, 6 mixed) piece emoji, and its requirements, before the timer starts. Only the bonus-round reveal has a Skip.
 - **Bonus rounds:** a flat 30-second timer, no move cap at all, and no life risk — the timer simply ends the round and whatever was scored stands. Bonus levels count toward `levels_reached` but their score is never subject to the "incomplete = 0" rule regular slots use. The piece mix is deterministic: 2 emoji drawn from each of the 3 most recently completed slot themes.
-- **Ad count:** both the ad-life grant and the bonus-round entry gate are single-ad, per the existing 2026-09-11 "Ad cadence" decision — the uploaded prototype simulates 2 ads per gate, but is judged to predate that decision rather than supersede it.
+- **Ad count:** both the ad-life grant and the bonus-round entry gate are single-ad, per the existing 2026-09-11 "Ad cadence" decision — the uploaded prototype simulates 2 ads per gate, but is judged to predate that decision rather than supersede it. Both are real AdMob rewarded ads as of Phase 10 (`client/src/js/attempt.js`'s `playRewardedAd()`), not the earlier dev-stub instant grant — see Section 5.
 - **Idle hints (added 2026-09-15, corrected twice same day):** after 5 seconds with no successful move (an invalid swap attempt doesn't count), ONE tile is highlighted with a pulsing colour glow — the single tile the player should move to trigger some available match. Not the whole board (an earlier pass highlighted every cell touched by any legal move, which lit up most of an 8x8 grid) and not the resulting match's full run either — just the one tile to move. The highlight persists — it does not re-flicker or re-scan — until the player's next successful move, which both clears it and restarts the 5-second countdown from zero. Applies to bonus levels too. See `GameEngine.findHintCell()` (singular) and `attempt.js`'s `showHints()`/`scheduleHintTimer()`/`clearHints()`.
 - **Life-used/ad-life toast (`.game-toast`):** large bold centered text with no background pill (dropped on request — text-shadow carries readability instead), shown for 5 seconds.
 
-Implemented in `client/src/js/game-engine.js` (pure match/cascade/scoring logic) and `client/src/js/attempt.js` (state machine, rendering, input). Regular-slot boards and theme assignment now come from the server (`start-attempt`, Section 4) rather than being client-generated. One later-phase dependency remains stubbed: the ad-life/bonus-ad gates grant immediately with no real AdMob flow pending Phase 10. Score submission to the `score-replay` Edge Function is wired (`attempt.js`'s `submitAttempt()`) and, as of Phase 6, so is server-side persistence — the attempt-summary screen shows the client-computed figures only as a brief "(validating…)" preview, then switches to the server-authoritative response. See Section 5 for the payload contract and the function's current deployment gap.
+Implemented in `client/src/js/game-engine.js` (pure match/cascade/scoring logic) and `client/src/js/attempt.js` (state machine, rendering, input). Regular-slot boards and theme assignment now come from the server (`start-attempt`, Section 4) rather than being client-generated. The ad-life/bonus-ad gates use a real AdMob rewarded-video flow as of Phase 10, server-verified via SSV rather than a client-trusted flag — see Section 5. Score submission to the `score-replay` Edge Function is wired (`attempt.js`'s `submitAttempt()`) and, as of Phase 6, so is server-side persistence — the attempt-summary screen shows the client-computed figures only as a brief "(validating…)" preview, then switches to the server-authoritative response. See Section 5 for the payload contract and the function's current deployment gap.
 
 ## 4. Daily Game Generation & Fairness Model
 
@@ -200,7 +202,9 @@ One record per level actually played (finished or, for at most the final entry, 
 
 **Not yet wired (deferred to later phases):** not yet deployed to the live Supabase project (Phase 11 builds `deploy-functions.yml`, and `generate-daily-games` additionally needs a one-time manual Supabase Cron Trigger setup), and slot-cap enforcement (Section 3.9/Phase 8) is only a soft guard in `start-attempt` right now.
 
-Ad-life grants and bonus-round entries are verified server-side via AdMob SSV callbacks, never trusted from a client-reported "ad watched" flag — this remains a Phase 10 item, unaffected by Phase 5/6.
+**Ad-life grants and bonus-round entries (Phase 10, 2026-09-18 — implemented, not yet deployed/verified live).** Neither `adLifeUsed` nor `isBonus` in the payload above is trusted as a bare client-reported boolean. Every rewarded-ad request `client/src/js/attempt.js`'s `playRewardedAd()` makes sets `ssv.customData = ${attemptId}:${slotIndex}:life|bonus` and `ssv.userId` to the player's own id; Google's AdMob infrastructure calls a new Edge Function, `server/functions/admob-ssv/index.ts`, directly and out-of-band from the device once the ad genuinely completes, carrying those same two values in a request whose query parameters are cryptographically signed by Google. `admob-ssv` verifies that signature (ECDSA P-256/SHA-256 against Google's published, rotating key set) before writing a row to a new table, `ad_verifications` (`attempt_id, slot_index, ad_type, transaction_id`, service-role-only — no client RLS access in either direction). `score-replay` now requires a matching row here before crediting any level with `adLifeUsed=true` or `isBonus=true` — a modified client can still set either flag to whatever it wants in its own payload, but without an independently-verified ad completion recorded against that exact attempt+slot+type, the level is rejected outright, same as an illegal move or a tampered board.
+
+Not yet done, in order: run the `ad_verifications` migration, deploy `admob-ssv` as a live Edge Function, set its URL as the Callback URL for the Rewarded ad unit in the AdMob console, use AdMob's console "Send test callback" feature to fire one real signed callback at it and confirm the signature check actually passes (the verification logic was written directly from Google's documented algorithm, not yet exercised against a real signed callback), then a full on-device rewarded-ad watch-through for both the ad-life grant and bonus-round entry. See docs/SESSIONS.md's latest entry.
 
 ## 6. Data Model (Postgres, Supabase)
 
