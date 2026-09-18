@@ -507,6 +507,23 @@ const Attempt = (() => {
     });
   }
 
+  // Turns a playRewardedAd() rejection into text a mobile-only player can
+  // actually read and report back — there's no way to check this device's
+  // console/Logcat output without a terminal, so whatever the native AdMob
+  // SDK says (most commonly "No fill." on a brand-new or unpublished ad
+  // unit, which is expected and not a code bug) needs to reach the screen
+  // directly rather than only going to console.error().
+  function describeAdError(err) {
+    const msg = (err && err.message) || String(err || '');
+    if (msg === 'Ad closed before finishing.') {
+      return 'Ad was closed before it finished — try again.';
+    }
+    if (msg) {
+      return `Ad failed: ${msg}`;
+    }
+    return 'Ad failed to load or play.';
+  }
+
   function offerAdLife() {
     // Blocks play until the player picks an option below — without this,
     // the board (still on screen-game underneath this prompt) stayed fully
@@ -553,7 +570,11 @@ const Attempt = (() => {
         console.error('Rewarded ad (life) failed:', err);
         adBtn.disabled = false;
         adBtn.textContent = 'Watch ad for extra time';
-        errorLine.textContent = 'Ad didn’t finish — try again, or give up.';
+        // Surfaced on-screen, not just console.error — there's no way to
+        // check device logs without a terminal, so the actual native
+        // AdMob error text (e.g. "No fill.", the most common cause on a
+        // new/sideloaded ad unit) needs to reach the player directly.
+        errorLine.textContent = describeAdError(err);
         errorLine.style.display = '';
         // a.locked stays true — the board underneath stays non-interactive
         // until the player picks an option, same as the original lock.
@@ -862,7 +883,7 @@ const Attempt = (() => {
         btn.disabled = false;
         btn.textContent = btn.dataset.defaultLabel;
       }
-      await window.showAlert('Ad didn’t finish — bonus round skipped this time.', 'error');
+      await window.showAlert(`${describeAdError(err)} Bonus round skipped this time.`, 'error');
       prepareLevel({ bonus: false });
     }
   }
