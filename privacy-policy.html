@@ -2,10 +2,218 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Match Emojis Daily — Privacy Policy</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 32px 20px 64px;
+    line-height: 1.6;
+    color: #1a1a1a;
+    background: #ffffff;
+  }
+  h1 { font-size: 28px; margin-bottom: 4px; }
+  h2 { font-size: 19px; margin-top: 36px; border-bottom: 1px solid #e0e0e0; padding-bottom: 6px; }
+  h3 { font-size: 16px; margin-top: 22px; }
+  .meta { color: #666; font-size: 14px; margin-bottom: 28px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { text-align: left; border: 1px solid #ddd; padding: 8px 10px; vertical-align: top; }
+  th { background: #f7f7f7; }
+  code { background: #f2f2f2; padding: 1px 5px; border-radius: 3px; font-size: 0.92em; }
+  a { color: #6a4cff; }
+  ul { padding-left: 22px; }
+  .note {
+    background: #fff8e6;
+    border: 1px solid #f0d78c;
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-size: 14px;
+    margin: 16px 0;
+  }
+</style>
 </head>
 <body>
-<h1>Privacy Policy</h1>
-<p>Placeholder. This page is completed and published via GitHub Pages before Google Play submission (Phase 12 of docs/ROADMAP.md). It will describe: what data is collected (name and email only, plus standard app analytics and crash reports), how it is used, how a user can change or delete their data, and contact details for data requests.</p>
+
+<h1>Privacy Policy — Match Emojis Daily</h1>
+<p class="meta">Effective date: <strong>[FILL IN — date this page is actually published]</strong> &nbsp;|&nbsp; Last updated: 2026-09-19</p>
+
+<p>
+  Match Emojis Daily ("the App", "we", "us") is a daily match-3 puzzle game published by
+  GC3 Studio Inc. ("the Developer"). This policy explains what information the App collects,
+  why, how it is used and stored, and the choices available to players. It applies to the
+  Android app and any associated backend services (authentication, leaderboards, score
+  validation, and analytics) described below.
+</p>
+
+<div class="note">
+  <strong>Note to whoever is publishing this page:</strong> the bracketed placeholders below
+  (effective date and contact email) must be filled in with real values before this page is
+  linked from the Google Play Console listing. Everything else describes what the app's code
+  and configured third-party services actually do, as of 2026-09-19.
+</div>
+
+<h2>1. Information We Collect</h2>
+
+<h3>1.1 Account information (provided by you)</h3>
+<p>To play, a player creates an account using email-based sign-in (a one-time confirmation
+link — no password is ever set or stored by us). We collect:</p>
+<ul>
+  <li><strong>Email address</strong> — used solely to sign you in and, if you request it, to
+      verify a change of email address. It is never shown to other players.</li>
+  <li><strong>Display name</strong> — chosen by you, shown to other players on leaderboards.
+      Do not use your real name if you'd prefer to stay pseudonymous; any name you choose is
+      treated as public.</li>
+</ul>
+
+<h3>1.2 Gameplay data</h3>
+<p>To run daily puzzles, leaderboards, and prevent cheating, we record, per attempt:</p>
+<ul>
+  <li>Start and completion time, score, time bonus, lives used, and levels reached</li>
+  <li>Which daily puzzle definition was played and in what order</li>
+  <li>Whether an attempt was completed or abandoned (forfeited)</li>
+</ul>
+<p>
+  Gameplay moves themselves (the sequence of tile swaps you make) are sent to our server once,
+  at the end of an attempt, purely to verify the score is legitimate. This move data is used
+  only for that one-time verification and is not stored after verification completes — only
+  the resulting summary (score, time bonus, etc. above) is kept.
+</p>
+
+<h3>1.3 Analytics and crash data</h3>
+<p>
+  We use <strong>Firebase Analytics</strong> and <strong>Firebase Crashlytics</strong>
+  (Google) to understand how the App is used and to diagnose crashes. This can include:
+</p>
+<ul>
+  <li>Device model, OS version, app version, language/locale, and general (city-level or
+      coarser) location inferred from IP address</li>
+  <li>In-app events (e.g. a level completed, a screen viewed) and session length</li>
+  <li>Crash logs and stack traces if the App crashes or encounters an error</li>
+  <li>A Firebase-generated installation identifier and, where applicable, the Android
+      advertising identifier</li>
+</ul>
+<p>
+  We do <strong>not</strong> use Firebase's database or authentication products — Firebase is
+  used only for analytics and crash reporting, and is kept separate from the account and
+  gameplay data described above, which is stored with Supabase (see Section 2).
+</p>
+
+<h3>1.4 Advertising data</h3>
+<p>
+  The App shows optional, player-initiated rewarded video ads (e.g. to earn an extra life or
+  unlock a bonus round) and, in some builds, banner or interstitial ads, served through
+  <strong>Google AdMob</strong>. AdMob and its ad-serving partners may collect the advertising
+  identifier, device information, and general location to select and measure ads, and to
+  verify that a rewarded ad was genuinely watched (server-side verification) before granting
+  its in-game reward. We do not control what AdMob's ad partners themselves do with this data
+  beyond what Google publishes in its own policies (linked in Section 5).
+</p>
+<p>
+  Firebase Analytics is linked to AdMob so that ad revenue can be reported alongside general
+  usage analytics (e.g. which player segments generate more ad views) — this is aggregate
+  reporting for the Developer, not information shared back to individual players.
+</p>
+
+<h2>2. Where Your Data Is Stored</h2>
+<table>
+  <tr><th>Data</th><th>Stored with</th><th>Purpose</th></tr>
+  <tr><td>Account (email, display name), gameplay/attempt records, leaderboard stats</td>
+      <td>Supabase (Postgres database, hosted in the South Asia / Mumbai region)</td>
+      <td>Sign-in, gameplay, leaderboards, score integrity</td></tr>
+  <tr><td>Analytics events, crash reports</td>
+      <td>Firebase (Google)</td>
+      <td>Understanding usage, diagnosing bugs and crashes</td></tr>
+  <tr><td>Advertising identifiers, ad interaction data</td>
+      <td>Google AdMob</td>
+      <td>Serving and verifying rewarded/interstitial/banner ads</td></tr>
+</table>
+<p>
+  Your email address is only ever stored in our Supabase database and Supabase's own
+  authentication system — it is never sent to Firebase, AdMob, or any other third party.
+</p>
+
+<h2>3. How We Use Your Information</h2>
+<ul>
+  <li>To create and maintain your account and let you sign in</li>
+  <li>To run the daily puzzle, track your progress, and show leaderboards</li>
+  <li>To verify that submitted scores are legitimate (server-side score replay) and to detect
+      abandoned or forfeited attempts</li>
+  <li>To understand how the App is used, fix bugs, and improve it (analytics/crash reporting)</li>
+  <li>To show and verify rewarded/interstitial/banner ads, and to measure ad performance</li>
+  <li>To communicate with you about your account if you contact us (e.g. a support request)</li>
+</ul>
+<p>We do not sell your personal information, and we do not use your email address for
+marketing.</p>
+
+<h2>4. Your Choices and Rights</h2>
+<ul>
+  <li><strong>Display name</strong> — editable at any time from the in-app Profile screen.</li>
+  <li><strong>Email address</strong> — changeable at any time from the in-app Profile screen,
+      via a confirmation link sent to the new address.</li>
+  <li><strong>Access or delete your data</strong> — to request a copy of the personal data we
+      hold about you, or to request deletion of your account and associated data, contact us
+      using the details in Section 6. We will act on a deletion request within a reasonable
+      time, except where we're required to retain certain records by law.</li>
+  <li><strong>Advertising identifier</strong> — you can reset or limit ad tracking for your
+      device from your Android device's own Settings &gt; Privacy &gt; Ads menu, which applies
+      to AdMob the same as any other app using it.</li>
+</ul>
+
+<h2>5. Third-Party Services</h2>
+<p>The App relies on the following third-party services, each with its own privacy policy
+governing how it separately handles data on its platform:</p>
+<ul>
+  <li>Supabase — <a href="https://supabase.com/privacy" target="_blank" rel="noopener">supabase.com/privacy</a></li>
+  <li>Google Firebase (Analytics &amp; Crashlytics) — <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">policies.google.com/privacy</a></li>
+  <li>Google AdMob — <a href="https://policies.google.com/technologies/ads" target="_blank" rel="noopener">policies.google.com/technologies/ads</a></li>
+</ul>
+
+<h2>6. Children's Privacy</h2>
+<p>
+  Match Emojis Daily does not knowingly collect personal information from children under the
+  age applicable in their jurisdiction (13 in most regions; higher in some). The App does not
+  ask for or collect birthdate, age, phone number, or address at any point, and account
+  creation only requires an email address and a display name. If you believe a child has
+  provided us with personal information, please contact us using the details below and we will
+  take steps to remove it.
+</p>
+
+<h2>7. Data Retention</h2>
+<ul>
+  <li>Account and gameplay summary data is kept for as long as your account exists, so that
+      leaderboards, stats, and history remain accurate.</li>
+  <li>Raw gameplay move data used for one-time score verification is not retained after
+      verification.</li>
+  <li>Analytics and crash data is retained according to Firebase's default retention settings.</li>
+  <li>If you request account deletion, we will remove your account and associated gameplay
+      records, other than data we're required to keep for legal or security purposes.</li>
+</ul>
+
+<h2>8. Security</h2>
+<p>
+  Account sign-in uses one-time email links rather than stored passwords. Database access is
+  protected with row-level security so that, other than public leaderboard information, a
+  player's own data can only be read by that player and never written directly by any client —
+  all score-affecting writes are validated and performed by server-side functions. No method
+  of transmission or storage is 100% secure, but we take reasonable steps to protect your
+  information.
+</p>
+
+<h2>9. Changes to This Policy</h2>
+<p>
+  We may update this policy from time to time. Material changes will be reflected by updating
+  the "Last updated" date at the top of this page. Continued use of the App after a change
+  constitutes acceptance of the updated policy.
+</p>
+
+<h2>10. Contact Us</h2>
+<p>
+  For questions about this policy, or to request access to or deletion of your data, contact:
+</p>
+<p><strong>[FILL IN — a real contact email address, e.g. support@yourdomain.com]</strong></p>
+<p>GC3 Studio Inc.</p>
+
 </body>
 </html>
