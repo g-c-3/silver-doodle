@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-09-19 (Phase 10 — Ads — fully deployed and verified live, including a real multi-touch input bug found and fixed along the way).
+Last updated: 2026-09-19 (Phase 10 fully done; tile/emoji sizing pass — board and reveal-ticket emoji now share one sizing source, matching each other exactly).
 
 - [x] **Phase 0 — Repo scaffold & docs.** Seed `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`, `docs/SESSIONS.md`; establish folder structure.
 - [ ] **Phase 1 — Infra & secrets (manual, one-time).** Mostly complete — see below.
@@ -79,6 +79,7 @@ Last updated: 2026-09-19 (Phase 10 — Ads — fully deployed and verified live,
   - **Status bar overlapped app content.** `targetSdk` 36 makes edge-to-edge mandatory (Android 15+); fixed with CSS using Capacitor's `--safe-area-inset-*` custom properties (not the standard `env(safe-area-inset-*)`, which Capacitor's Android WebView doesn't populate correctly — confirmed via research, not assumed) added to `.screen`, `#screen-game`, `#screen-info`, and `.icon-btn-corner` (the corner-pinned logout/info buttons, which needed their own fix since `position: absolute` ignores parent padding entirely). Not yet confirmed on-device at time of writing.
 
   New files this phase: `.github/workflows/build-apk.yml`, `.github/workflows/deploy-functions.yml`, `.github/workflows/scripts/patch_build_gradle.py`, `.github/workflows/scripts/patch_android_manifest.py`, `client/package.json`, `client/capacitor.config.json`, `client/assets/icon.svg`, `client/src/js/deep-link.js`, `supabase/config.toml`, root `.gitignore`. `supabase/config.toml` pins `verify_jwt = false` explicitly for `forfeit-stale-attempts`/`generate-daily-games`, since that was previously only a Dashboard toggle a CLI deploy could otherwise silently reset.
+- [x] **Tile/emoji sizing pass (2026-09-19).** Not tied to a specific numbered phase — general legibility polish requested directly. Board tiles were rendering emoji at only ~38-42% fill of their own cell (measured across common phone widths); increased to a shared, single-source-of-truth sizing scheme (`--tile-font-size` in `client/src/css/styles.css`) also used by the theme-reveal ticket, so its emoji now render at exactly the same size they will during actual play rather than a separately-tuned fixed 30px. Along the way, fixed a real latent bug in the old sizing formula (viewport-width-only, didn't account for `54dvh`/the `460px` cap, which bind instead of `94vw` in landscape — nothing locks this app to portrait) by deriving both the board and the ticket from the literal same `min()` expression. See docs/DECISIONS.md's 2026-09-19 "Tile sizing" entry.
 - [ ] **Phase 12 — Play Store prep.** Privacy policy page published via GitHub Pages; production AdMob ad unit IDs swapped in; store listing assets.
 
 Phases are worked in order; a phase is not started without the prior phase's code passing CI.

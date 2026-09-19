@@ -4,6 +4,24 @@ Most recent entry first.
 
 ---
 
+**2026-09-19 (later) — Board and reveal-ticket emoji sizing, unified**
+
+Requested directly, not tied to a phase: board tiles looked visually small relative to their cell. Measured before touching anything, rather than assuming: across common phone widths (360–428px) plus a 768px tablet case, the board's actual fill ratio (font-size vs. real computed cell size) sat consistently at ~38-42% — real headroom, not device-specific.
+
+**Audited all 156 emoji (26 themes × 6) for scaling risk before recommending a change.** No ZWJ sequences, no skin-tone modifiers; 9 themes use a VS16-suffixed emoji (☀️🕷️ etc.), a normal two-codepoint pair, not a special case. Both the tile and the emoji font's own glyph box are square, so there's no differential horizontal/vertical clipping risk across the set — this was genuinely a single-scalar sizing question, not 156 individual cases to reason about.
+
+**Found a real latent bug while checking the sizing formula, not the requested change itself:** the board's font-size (`clamp(15px, 4vw, 22px)`) was derived from `vw` alone, but the real rendered cell size also depends on `54dvh` and a `460px` cap, combined via `min()`. In portrait, `vw` happens to be the binding constraint, so the mismatch is invisible — but nothing locks this app to portrait (checked: no `screenOrientation` in the manifest, no Capacitor orientation config), and a computed landscape case showed the vw-based font (22px) actually exceeding the real cell size (~21.5px) — the glyph would visibly overflow its own tile.
+
+**Fix: one shared CSS custom property, not two independently-tuned numbers.** `--board-width: min(94vw, 54dvh, 460px)` and `--tile-font-size` (62% of the resulting cell edge, clamped 12–36px as a safety net) now live at `:root` in `client/src/css/styles.css`; `.game-board` and `.game-cell` reference them instead of duplicating the formula, so there's exactly one place this logic lives.
+
+**Then extended to the theme-reveal ticket on request** ("same size as it may look in the actual play"): `.ticket-emojis` now uses the identical `--tile-font-size` variable instead of a fixed `30px`, with its grid `max-width` scaled proportionally from the same variable (was a fixed `220px`) so spacing stays visually consistent as the font size varies by device. Verified this doesn't overflow the reveal screen's `360px` container cap at any realistic device width before shipping (worst case, a 768px tablet: ~236px, well within bounds). Flagged directly that this makes the ticket's emoji match play size exactly, which on most phones is actually a touch *smaller* than the old fixed 30px, not bigger — the request was specifically "match," not "maximize."
+
+Illustrated the size comparison and the actual reveal-ticket component with the Visualizer before implementing, at real computed proportions, so the discussion had something concrete to react to rather than describing pixel ratios in prose.
+
+**Next session start point:** no code follow-up expected — this was a self-contained, verified change. Next phase-numbered work is still Phase 1's Google Play Console account or Phase 12 (Play Store prep), neither started.
+
+---
+
 **2026-09-19 — Phase 10 closed out: on-device verification, a real multi-touch bug found and fixed, difficulty investigated (left alone), three UX/integrity polish items**
 
 Continuation of the same Phase 10 thread. Picked up right after the DER signature fix, with a second live AdMob "Verify callback URL" test to confirm it — passed (`"admob-ssv: malformed custom_data \"null\"..."` in the logs means the signature check succeeded and only stopped on the test callback's deliberately-blank custom_data, exactly the expected outcome). That closed out the last open question on the SSV verification logic itself.
