@@ -4,28 +4,35 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Match Emojis Daily</title>
-  <script>
-    // Magic-link deep-link handoff — deliberately the very first thing on
-    // the page, before any other script or even the stylesheet loads, so a
-    // bare-browser landing on the auth callback hands off to the app as
-    // fast as possible. See client/src/js/deep-link.js for the full
-    // reasoning (short version: signInWithOtp()'s PKCE code_verifier lives
-    // in whichever origin started the sign-in, and the emailed link always
-    // opens in the system browser regardless of where that was — so if
-    // sign-in was started inside the app, this handoff isn't just a UX
-    // nicety, it's required for the exchange to be able to succeed at all).
-    // window.Capacitor is injected natively before any page script runs
-    // when actually inside the app, so this check is safe to run here.
-    (function () {
-      if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
-        return; // Already inside the app — nothing to hand off.
-      }
-      var hasCode = /[?&]code=/.test(location.search);
-      var hasToken = /access_token=/.test(location.hash);
-      if (!hasCode && !hasToken) return; // Not an auth callback landing — ordinary page load.
-      location.replace('matchemojisdaily://auth-callback' + location.search + location.hash);
-    })();
-  </script>
+  <!--
+    SECURITY FIX (2026-09-19, §5.12): supabase-js used to load from
+    cdn.jsdelivr.net at an unpinned floating @2 version, with no
+    Subresource Integrity — a compromised package, CDN response, or MITM
+    of that host could run arbitrary JS inside this WebView, with the
+    user's session and the Capacitor bridge (AdMob, App plugins) both
+    reachable. Fixed at the source (now loaded from js/vendor/supabase.js,
+    a locally-bundled exact version — see that script tag near the bottom
+    of this file and client/package.json), and backstopped here with a CSP
+    that wouldn't have allowed the CDN script to run in the first place:
+    script-src 'self' blocks any script not served from this app's own
+    origin, whether that's a compromised CDN or an injected inline script
+    from anywhere else. connect-src is scoped to exactly this project's
+    Supabase URL (client/src/js/config.js) — nothing else network-reachable
+    from inside the WebView. No inline-script exception is needed at all:
+    the one inline script this page used to have (the deep-link handoff)
+    was moved to its own file specifically so this CSP could stay this
+    simple rather than needing a content-hash kept in sync by hand.
+  -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self';
+                 connect-src 'self' https://wgkcxixocfzydawurluh.supabase.co;
+                 img-src 'self' data:;
+                 style-src 'self' 'unsafe-inline';
+                 base-uri 'none';
+                 form-action 'none';
+                 frame-ancestors 'none'" />
+  <script src="js/early-auth-handoff.js"></script>
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
@@ -482,7 +489,15 @@
     </div>
   </section>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- SECURITY FIX (2026-09-19, §5.12): was cdn.jsdelivr.net/npm/@supabase/supabase-js@2
+       (unpinned, no SRI) — now bundled locally at an exact pinned version.
+       client/package.json pins the version; .github/workflows/build-apk.yml
+       copies node_modules/@supabase/supabase-js/dist/umd/supabase.js to
+       this path during CI, same "not committed, generated fresh every
+       build" pattern already used for android/ and the app icon — so
+       there's nothing to keep in sync by hand, just the one version number
+       in package.json. -->
+  <script src="js/vendor/supabase.js"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/deep-link.js"></script>
