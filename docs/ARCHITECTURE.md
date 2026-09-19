@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-19 (Phase 10 — Ads — fully deployed and verified live; multi-touch input bug found and fixed).
+Last updated: 2026-09-19 (later) — Phase 12 (Play Store prep) started: privacy policy, store listing copy, app icon export, and feature graphic drafted; app icon source confirmed switched to an externally-sourced image, no longer the originally-designed vector art (see Section 2 and DECISIONS.md).
 
 ## 1. Stack
 
@@ -38,7 +38,10 @@ client/
   assets/
     icon.svg           app icon source (Phase 11) — every density/adaptive-icon variant regenerated
                         from this by @capacitor/assets on each CI run, same "source committed,
-                        generated output is not" pattern as android/ itself
+                        generated output is not" pattern as android/ itself. As of 2026-09-19
+                        (later), this is a deliberately externally-sourced raster image wrapped
+                        in an <svg> container (not hand-authored vector art) — see DECISIONS.md;
+                        the CI regeneration step is unaffected either way.
   capacitor.config.json
   package.json          pinned exact @capacitor/* versions — keeps the CI-generated android/
                          project's shape stable run to run, which patch_build_gradle.py depends on
@@ -277,13 +280,17 @@ Built 2026-09-16, out of roadmap order ahead of Phase 10 (Ads) — see DECISIONS
 
 Runner specifics that weren't obvious until a real run failed on them, in case they need revisiting on a future runner-image update: `sdkmanager` isn't on `PATH`, call it via `$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager`; `@capacitor/cli@8.5.2` requires Node ≥22; `capacitor-android`'s own module needs JDK 21 (not 17); attaching a GitHub Release needs an explicit `permissions: contents: write` block (the default `GITHUB_TOKEN` only gets `contents: read`).
 
-**`deploy-functions.yml`.** Triggers on push to `server/functions/**`. The Supabase CLI expects functions under `supabase/functions/`, which this repo deliberately doesn't use as a real directory (Section 2) — the workflow stages a copy there at deploy time only, then runs `supabase functions deploy --use-api --project-ref "$SUPABASE_PROJECT_REF"` (Docker-free; deploys every function found, no need to name them individually) using `SUPABASE_ACCESS_TOKEN`. `SUPABASE_PROJECT_REF` is a plain literal in the workflow, not a secret (see DECISIONS.md) — it's the same non-sensitive value as `supabase/config.toml`'s `project_id` and Section 12 below.
+**`deploy-functions.yml`.** Triggers on push to `server/functions/**`. The Supabase CLI expects functions under `supabase/functions/`, which this repo deliberately doesn't use as a real directory (Section 2) — the workflow stages a copy there at deploy time only, then runs `supabase functions deploy --use-api --project-ref "$SUPABASE_PROJECT_REF"` (Docker-free; deploys every function found, no need to name them individually) using `SUPABASE_ACCESS_TOKEN`. `SUPABASE_PROJECT_REF` is a plain literal in the workflow, not a secret (see DECISIONS.md) — it's the same non-sensitive value as `supabase/config.toml`'s `project_id` and Section 13 below.
 
 **`supabase/config.toml`.** Pins `verify_jwt = false` explicitly for `forfeit-stale-attempts` and `generate-daily-games` — both cron-only, both previously relying on a Dashboard-only toggle a CLI deploy could otherwise have silently reset. See DECISIONS.md for why this matters.
 
 GitHub Actions handles all building; no local terminal build steps are ever required.
 
-## 12. Provisioned Infrastructure
+## 12. Play Store Prep (Phase 12)
+
+Started 2026-09-19 (later). `privacy-policy.html` (repo root, served via GitHub Pages per Section 2) was rewritten from the Phase 0 placeholder into a real policy covering Supabase-held account/gameplay data, Firebase Analytics + Crashlytics, and AdMob advertising data, with rights/retention/security/children's-privacy sections — two values (effective date, contact email) are left as explicit placeholders pending account-holder input rather than invented. `docs/STORE_LISTING.md` (new) holds the draft Play Console listing copy (title, descriptions, category/tags) plus a graphic-asset checklist. A 512×512 PNG app icon and a 1024×500 feature graphic were produced for the listing — see Section 2's `icon.svg` note and DECISIONS.md for why the icon source no longer matches its originally-designed look. Still outstanding: real device screenshots, the in-console content-rating questionnaire, production AdMob ad unit IDs (Section 13's table below still lists development/test IDs), and the Google Play Console developer account itself (Phase 1's other still-open item).
+
+## 13. Provisioned Infrastructure
 
 Non-secret identifiers only — actual credentials live in GitHub Actions secrets, never in this file. Established during Phase 1 (2026-09-12).
 

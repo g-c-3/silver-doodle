@@ -74,8 +74,8 @@ at Play Store size (not just at app-icon size, which is already handled by Phase
 
 | Asset | Spec | Status |
 |---|---|---|
-| App icon | 512×512 PNG, 32-bit with alpha | Can be generated from the existing `client/assets/icon.svg` (same source Phase 11's CI pipeline already uses) — just needs a one-off high-res export, not yet done |
-| Feature graphic | 1024×500 PNG or JPG, no alpha | Not started — this is a separate wide banner design, not just a crop of the icon |
+| App icon | 512×512 PNG, 32-bit with alpha | **Done** — exported from the live `client/assets/icon.svg`. Note: that file was deliberately switched to an externally-sourced (AI-generated) image, not the "Option B" neon-glow design DECISIONS.md/ARCHITECTURE.md still describe — those docs need a correction pass. |
+| Feature graphic | 1024×500 PNG or JPG, no alpha | **Done** — color-matched to the current icon's blue palette. |
 | Phone screenshots | 2–8 images, 16:9 or 9:16, min 320px on the short side | Not started — needs real gameplay screenshots from a device (reveal screen, in-level HUD, bonus round, leaderboard, attempt summary make a good spread) |
 | Short promo video (optional) | YouTube link | Not planned — optional, skip unless wanted later |
 
@@ -104,10 +104,13 @@ questionnaire is submitted.
    commit it, and publish it via GitHub Pages.
 2. Decide and share the contact email so it can be reused consistently across the privacy
    policy and this listing.
-3. Export a 512×512 PNG of `client/assets/icon.svg` for the Play Console icon slot.
-4. Design a 1024×500 feature graphic.
+3. ~~Export a 512×512 PNG of `client/assets/icon.svg` for the Play Console icon slot.~~ Done.
+4. ~~Design a 1024×500 feature graphic.~~ Done.
 5. Capture the 5 suggested screenshots from a real device running the current build.
 6. Swap in production AdMob ad unit IDs (separate Phase 12 item — needs new ad units
    created in the AdMob console, since the current ones are marked development/test-only).
 7. Start the Google Play Console developer account / identity verification (Phase 1's
    still-open item) — this has its own lead time and can run in parallel with the above.
+8. Correct DECISIONS.md/ARCHITECTURE.md's app-icon description — both still describe the
+   earlier "Option B" neon-glow vector design; the icon was since deliberately replaced with
+   an externally-sourced image (confirmed intentional). Docs haven't been updated to match yet.
