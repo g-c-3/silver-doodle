@@ -389,6 +389,17 @@ const MIN_MS_PER_MOVE = 400;
 // This exists so a malicious payload can't force this function to iterate
 // an unbounded moves array before any other check gets a chance to reject it.
 const MAX_MOVES_PER_LEVEL = 200;
+// SECURITY FIX (2026-09-19, §5.4): a forfeited attempt is deliberately
+// still accepted here (see the status check below) — a dropped connection
+// shouldn't destroy a legitimately-played run — but previously with no time
+// limit at all, so a forfeit from days ago could still be submitted and get
+// re-dated to today. forfeit-stale-attempts sets completed_at at the moment
+// it detects and marks the forfeit, so this bounds how long after THAT a
+// late submission is still honored. 45 minutes is a judgment call, not a
+// value from the report — generous enough for "closed the tab, reopened it
+// a while later, tapped Retry," short enough to bound the exposure. Easy to
+// tune if real usage shows it's wrong in either direction.
+const LATE_FORFEIT_WINDOW_MS = 45 * 60 * 1000;
 
 interface LevelPayload {
   slot: string;
@@ -707,7 +718,7 @@ Deno.serve(async (req: Request) => {
   // point replay at an easier game definition than the one start-attempt
   // actually assigned it. This also confirms attemptId belongs to the
   // calling user before anything else happens.
-  const attemptRow = await admin.from('attempts').select('id, user_id, game_definition_id, status, started_at').eq('id', body.attemptId).maybeSingle();
+  const attemptRow = await admin.from('attempts').select('id, user_id, game_definition_id, status, started_at, completed_at').eq('id', body.attemptId).maybeSingle();
   if (!attemptRow.data) {
     return new Response(JSON.stringify(fail('Unknown attemptId.')), { status: 404, headers: CORS_HEADERS });
   }
@@ -716,6 +727,16 @@ Deno.serve(async (req: Request) => {
   }
   if (attemptRow.data.status === 'completed') {
     return new Response(JSON.stringify(fail('This attempt has already been submitted and validated.')), { status: 409, headers: CORS_HEADERS });
+  }
+  // SECURITY FIX (2026-09-19, §5.4): see LATE_FORFEIT_WINDOW_MS above.
+  if (attemptRow.data.status === 'forfeited' && attemptRow.data.completed_at) {
+    const sinceForfeit = Date.now() - new Date(attemptRow.data.completed_at as string).getTime();
+    if (sinceForfeit > LATE_FORFEIT_WINDOW_MS) {
+      return new Response(
+        JSON.stringify(fail('This attempt was forfeited too long ago to still be submitted.')),
+        { status: 410, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
   }
   const gameDefinitionId = attemptRow.data.game_definition_id as string;
 
@@ -732,18 +753,38 @@ Deno.serve(async (req: Request) => {
   // PHASE 10: every ad_verifications row admob-ssv has recorded for this
   // attempt, as a single query — replayAttempt() only ever needs O(1)
   // membership checks against this, not a per-level round trip.
-  const adVerificationsResult = await admin
-    .from('ad_verifications')
-    .select('slot_index, ad_type')
-    .eq('attempt_id', body.attemptId);
-  if (adVerificationsResult.error) {
+  async function fetchVerifiedAdSlots(): Promise<{ slots: Set<string>; error: string | null }> {
+    const r = await admin.from('ad_verifications').select('slot_index, ad_type').eq('attempt_id', body.attemptId);
+    if (r.error) return { slots: new Set(), error: r.error.message };
+    return { slots: new Set((r.data ?? []).map((row) => `${row.slot_index}:${row.ad_type}`)), error: null };
+  }
+
+  const firstFetch = await fetchVerifiedAdSlots();
+  if (firstFetch.error) {
     return new Response(JSON.stringify(fail('Could not load ad-verification records for this attempt.')), { status: 500, headers: CORS_HEADERS });
   }
-  const verifiedAdSlots = new Set<string>(
-    (adVerificationsResult.data ?? []).map((row) => `${row.slot_index}:${row.ad_type}`)
-  );
+  let verifiedAdSlots = firstFetch.slots;
+  let result = replayAttempt(gameDefinitionId, boardsBySlotIndex, body.levels ?? [], verifiedAdSlots);
 
-  const result = replayAttempt(gameDefinitionId, boardsBySlotIndex, body.levels ?? [], verifiedAdSlots);
+  // SECURITY FIX (2026-09-19, §5.5): admob-ssv's callback from Google
+  // arrives out-of-band and can genuinely lag behind the client's own
+  // attempt submission by a few seconds. Previously, any ad claimed
+  // without a verification row yet failed the WHOLE attempt outright, with
+  // no distinction from a real, permanently-invalid payload. Now: if the
+  // ONLY reason replay failed is a missing ad-verification (identified by
+  // the exact fail() message replayAttempt uses for that case), wait
+  // briefly and re-check once before giving up — most SSV lag resolves in
+  // well under this window. If it's still missing after that, this really
+  // is either a genuine forgery attempt or an unusually slow callback, and
+  // failing at that point is correct.
+  if (!result.valid && result.error && /no verified ad completion found/.test(result.error)) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const secondFetch = await fetchVerifiedAdSlots();
+    if (!secondFetch.error) {
+      verifiedAdSlots = secondFetch.slots;
+      result = replayAttempt(gameDefinitionId, boardsBySlotIndex, body.levels ?? [], verifiedAdSlots);
+    }
+  }
 
   // SECURITY FIX (2026-09-19, §5.3/§6): even with every individual level's
   // elapsedMsAtEnd now floored (see replayAttempt), a payload could still
