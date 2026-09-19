@@ -28,6 +28,18 @@
 // docs/ARCHITECTURE.md) — per-player variation is only in *which order* the
 // 12 are served, assigned separately by start-attempt/index.ts on each
 // player's first attempt of the day.
+//
+// SECURITY FIX (2026-09-19): this function now requires a shared secret
+// (CRON_SECRET) sent as the x-cron-secret header — see the check at the top
+// of the handler and docs/DECISIONS.md's 2026-09-19 (later still) entry.
+// THIS CODE CHANGE ALONE DOES NOTHING until two things happen outside this
+// repo, same as this file's original Cron Trigger setup below: (1) set a
+// CRON_SECRET value under Project Settings > Edge Functions > Secrets, and
+// (2) edit the existing Cron Trigger (Dashboard > Edge Functions > this
+// function > Cron) to send that same value as an x-cron-secret header on
+// its scheduled call — Supabase Cron Triggers support custom headers in
+// their HTTP request config. Until both are done, every call (including
+// the legitimate daily cron) will get 403 Forbidden.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -189,10 +201,40 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: 'POST only.' }), { status: 405, headers: CORS_HEADERS });
   }
 
+  // SECURITY FIX (2026-09-19, DECISIONS.md — external audit §5.8): this
+  // function runs with verify_jwt = false (supabase/config.toml) — required
+  // because the daily cron trigger has no user JWT to send — but that also
+  // meant the previous code had NO check of any kind: anyone who could
+  // derive this project's function URL (the ref is public, in config.js)
+  // could call it directly with the public anon key. Confirmed by reading
+  // this file: the only "authorization" strings that existed were in the
+  // CORS header list. A shared secret, known only to the cron caller and
+  // this function's own environment, closes that — nothing else about this
+  // function's logic changed.
+  const cronSecret = Deno.env.get('CRON_SECRET');
+  if (!cronSecret || req.headers.get('x-cron-secret') !== cronSecret) {
+    return new Response(JSON.stringify({ ok: false, error: 'Forbidden.' }), { status: 403, headers: CORS_HEADERS });
+  }
+
   let gameDate = istDateString();
   try {
     const body = await req.json().catch(() => ({}));
     if (typeof body.gameDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.gameDate)) {
+      // SECURITY FIX (2026-09-19, §5.8): even authenticated (see above),
+      // gameDate is now restricted to today or tomorrow — the legitimate
+      // "manual/backfill override" use case never needs anything further
+      // out, and this bounds how many days ahead a future day's boards
+      // (readable by every signed-in player — see §5.6's related, separate
+      // design note) can ever be disclosed early.
+      const today = istDateString();
+      const tomorrow = new Date(new Date(`${today}T00:00:00+05:30`).getTime() + 86_400_000);
+      const tomorrowStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(tomorrow);
+      if (body.gameDate !== today && body.gameDate !== tomorrowStr) {
+        return new Response(
+          JSON.stringify({ ok: false, error: 'gameDate must be today or tomorrow (IST).' }),
+          { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      }
       gameDate = body.gameDate; // manual/backfill override, e.g. a missed cron day
     }
   } catch {
