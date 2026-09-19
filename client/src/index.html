@@ -110,7 +110,10 @@
     </div>
   </section>
 
-  <!-- Mandatory theme reveal, shown before every level (bonus reveal has a Skip) -->
+  <!-- Mandatory theme reveal, shown before every level. No skip here even
+       for a bonus round — the only point to decline one is the pre-ad
+       "Skip" on screen-bonus-prompt, before any ad is requested; once the
+       ad's been watched (this screen is reached), the round is committed. -->
   <section id="screen-level-reveal" class="screen hidden">
     <div class="center-column">
       <p class="muted" id="reveal-eyebrow">Theme Reveal</p>
@@ -121,7 +124,6 @@
         <p class="ticket-sub" id="reveal-sub"></p>
       </div>
       <button id="reveal-start-btn" type="button" class="primary">OK, Start</button>
-      <button id="reveal-skip-btn" type="button" class="link hidden">Skip bonus round</button>
     </div>
   </section>
 
