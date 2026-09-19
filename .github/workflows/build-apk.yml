@@ -87,21 +87,45 @@ jobs:
         run: |
           npm install
           npx cap add android
-          npx cap sync android
+
+      - name: Bundle supabase-js locally (§5.12)
+        # SECURITY FIX (2026-09-19): supabase-js used to load from a CDN at
+        # runtime, floating at @2 with no version pin and no Subresource
+        # Integrity — see docs/DECISIONS.md's 2026-09-19 (later still)
+        # entry. Copied from the exact pinned version in package.json
+        # (installed by the step above) straight into src/js/vendor/ —
+        # i.e. into client/src itself, BEFORE cap sync runs below, so the
+        # file is genuinely part of the webDir cap sync copies, the same
+        # "source generated fresh every run, nothing hand-committed"
+        # pattern already used for android/ and the app icon. Not
+        # committed to the repo — this file won't exist if you look at
+        # client/src/js/vendor/ directly; it only exists inside a CI run's
+        # workspace and inside the built APK.
+        working-directory: client
+        run: |
+          mkdir -p src/js/vendor
+          cp node_modules/@supabase/supabase-js/dist/umd/supabase.js src/js/vendor/supabase.js
+
+      - name: Sync web assets into the native Android project
+        working-directory: client
+        run: npx cap sync android
 
       - name: Generate app icon from source art
         # Regenerates every density + adaptive-icon variant from a single
         # source SVG on every run, the same "nothing native is hand-
         # committed" approach as everything else here (see
         # docs/DECISIONS.md's "android/ generated fresh in CI" entry).
-        # Design approved in chat 2026-09-17 (three-tile diagonal match,
-        # neon green glow) -- see client/assets/icon.svg's own header
-        # comment for the one known, deliberately accepted tradeoff (the
-        # glow sits at the icon edge and can clip on a circular launcher
-        # mask). Also generates matching splash screens as an Easy Mode
-        # side effect (same art, centered on the same background color) --
-        # not asked for, but harmless and visually consistent; easy to turn
-        # off later if that turns out not to be wanted.
+        # The source art itself (client/assets/icon.svg) was deliberately
+        # switched 2026-09-19 to an externally-sourced image, replacing the
+        # originally hand-designed "three-tile diagonal match, neon green
+        # glow" icon approved 2026-09-17 — see docs/DECISIONS.md's
+        # 2026-09-19 (later still) entry. This step's own logic is
+        # unaffected either way; it only ever needed a source image to
+        # rasterize, vector or not. Also generates matching splash screens
+        # as an Easy Mode side effect (same art, centered on the same
+        # background color) -- not asked for, but harmless and visually
+        # consistent; easy to turn off later if that turns out not to be
+        # wanted.
         working-directory: client
         run: |
           npx @capacitor/assets generate --android \
