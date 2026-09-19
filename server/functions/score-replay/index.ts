@@ -51,6 +51,24 @@
 // completion recorded against this exact attempt+slot+type, replay now
 // rejects the level outright. See docs/ARCHITECTURE.md Section 5 and
 // admob-ssv/index.ts's own header comment for the verification mechanism.
+//
+// SECURITY FIX (2026-09-19): following an external code review, this pass
+// closed four confirmed gaps, all independently re-verified against this
+// exact file before being fixed (not just taken on the review's word):
+// (1) bonus rounds had no move cap, no per-move time floor, and no
+//     placement/repeat/no-lives rules — a forged bonus could score far more
+//     than an entire honest 26-level run;
+// (2) elapsedMsAtEnd had no LOWER bound, so elapsedMsAtEnd=0 banked an
+//     entire level's time budget as time bonus, on every level;
+// (3) claimed lives-used had no check that they actually took the 60s
+//     timeout a real life-loss requires;
+// (4) attempt completion was two separate statements (a status read, then
+//     an unconditional UPDATE), so two concurrent submissions of the same
+//     attempt could double-count leaderboard stats.
+// See docs/DECISIONS.md's 2026-09-19 (later still) entry for the full
+// review and what's still open (RPC-privilege check, generate-daily-games
+// auth, leaderboard scaling, display-name defaults, and others — this pass
+// covered score-replay.ts only).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -354,6 +372,24 @@ const BONUS_MS = 30_000;
 const LIFE_EXTENSION_MS = 60_000;
 const TIME_SLACK_MS = 3_000; // tolerance for animation/network latency around a level's own budget
 
+// SECURITY FIX (2026-09-19, DECISIONS.md — external audit §5.1/§5.3/§6):
+// client/src/js/attempt.js locks input for 420ms after every accepted swap
+// (setTimeout(..., 420) with a.locked = true) before the next move can be
+// made — no legitimate client can ever submit moves faster than that. Used
+// as a floor on elapsedMsAtEnd so a forged, near-zero elapsed time can no
+// longer bank a full level's time budget as bonus, and forged bonus-round
+// payloads can no longer claim thousands of moves in a few seconds.
+// MIN_MS_PER_MOVE is set slightly under 420 (not exactly at it) to leave
+// slack for the animation/network jitter TIME_SLACK_MS already accounts for
+// elsewhere in this file.
+const MIN_MS_PER_MOVE = 400;
+// Hard payload/DoS guard independent of the above: no level, bonus or
+// regular, can ever legitimately need more than this many moves (the
+// longest regular slot's target is 107; BONUS_MS / MIN_MS_PER_MOVE is 75).
+// This exists so a malicious payload can't force this function to iterate
+// an unbounded moves array before any other check gets a chance to reject it.
+const MAX_MOVES_PER_LEVEL = 200;
+
 interface LevelPayload {
   slot: string;
   isBonus: boolean;
@@ -373,6 +409,7 @@ interface ReplayResult {
   adLivesUsed?: number;
   levelsReached?: number;
   status?: 'completed';
+  totalMinPlayMs?: number;
 }
 
 function fail(error: string): ReplayResult {
@@ -409,6 +446,14 @@ function replayAttempt(
   let totalScore = 0;
   let timeBonusMicros = 0;
   let levelsReached = 0;
+  // SECURITY FIX (2026-09-19, §5.1/§6): tracks whether a bonus round is
+  // actually allowed to appear next — only directly after a completed
+  // regular slot whose (1-based) position is a multiple of 3, per
+  // docs/ARCHITECTURE.md Section 3.4. Also accumulates the minimum
+  // real-world time the whole attempt could possibly have taken, checked
+  // against attempts.started_at by the HTTP handler below.
+  let lastWasCompletedRegular = false;
+  let totalMinPlayMs = 0;
 
   for (let i = 0; i < levels.length; i++) {
     const lvl = levels[i];
@@ -416,6 +461,24 @@ function replayAttempt(
 
     if (typeof lvl.isBonus !== 'boolean') return fail(`Level ${i}: missing isBonus.`);
     if (!Array.isArray(lvl.moves)) return fail(`Level ${i}: missing moves array.`);
+    // SECURITY FIX (2026-09-19, §5.1/§6): a bonus round is legal only
+    // directly after a completed regular slot at a position that's a
+    // multiple of 3 (slots C, F, I, ... per ARCHITECTURE.md Section 3.4) —
+    // never as the attempt's first level, never twice in a row, and never
+    // after a level that failed. Previously nothing enforced this: a
+    // payload could claim isBonus at any point, including slot 0 or
+    // repeatedly, with no rejection.
+    if (lvl.isBonus && (slotIndex === 0 || slotIndex % 3 !== 0 || !lastWasCompletedRegular)) {
+      return fail(`Level ${i}: bonus round not allowed at this point in the attempt.`);
+    }
+    // SECURITY FIX (2026-09-19, §5.1/§6): hard cap on moves per level,
+    // independent of and prior to every other check below — the previous
+    // code had no length limit at all for bonus levels (regular levels were
+    // implicitly bounded by the exact-match check further down, but only
+    // AFTER this array was already fully iterated).
+    if (lvl.moves.length > MAX_MOVES_PER_LEVEL) {
+      return fail(`Level ${i}: too many moves in a single level.`);
+    }
     if (lvl.outcome !== 'completed' && lvl.outcome !== 'failed') return fail(`Level ${i}: invalid outcome.`);
     if (lvl.outcome === 'failed' && (!isLast || lvl.isBonus)) {
       return fail('Only the final, non-bonus level of an attempt may fail.');
@@ -432,6 +495,13 @@ function replayAttempt(
     // ever offered once the 3 regular lives are already spent.
     if (adLifeUsed && livesPoolUsed + livesUsedThisLevel < STARTING_LIVES) {
       return fail(`Level ${i}: ad-life used before the regular life pool was exhausted.`);
+    }
+    // SECURITY FIX (2026-09-19, §5.1/§6): bonus rounds carry no lives at
+    // all — they're pure bonus time with no fail state (Section 3.5) — so
+    // neither a regular life nor the ad-life can ever legitimately be
+    // claimed on a bonus level. Previously unchecked.
+    if (lvl.isBonus && (livesUsedThisLevel > 0 || adLifeUsed)) {
+      return fail(`Level ${i}: bonus rounds cannot claim lives.`);
     }
     // PHASE 10: adLifeUsed/isBonus are never trusted as bare booleans — both
     // require a matching admob-ssv-verified row for this exact
@@ -486,6 +556,28 @@ function replayAttempt(
     if (!Number.isFinite(elapsedMsAtEnd) || elapsedMsAtEnd < 0 || elapsedMsAtEnd > budgetMs + TIME_SLACK_MS) {
       return fail(`Level ${i}: elapsedMsAtEnd outside this level's own time budget.`);
     }
+    // SECURITY FIX (2026-09-19, §5.3/§6): elapsedMsAtEnd previously had no
+    // lower bound at all — elapsedMsAtEnd = 0 passed the check above and
+    // banked the level's ENTIRE budget as time bonus (see the leftoverMs
+    // calculation below). Two floors now apply:
+    // 1. A level can't physically finish faster than its own move count
+    //    allows, at the client's real 420ms-per-move input lock.
+    const minElapsedForMoves = lvl.moves.length * MIN_MS_PER_MOVE;
+    if (elapsedMsAtEnd < minElapsedForMoves - TIME_SLACK_MS) {
+      return fail(`Level ${i}: elapsedMsAtEnd too short for ${lvl.moves.length} moves.`);
+    }
+    // 2. For regular levels, a life (regular or ad-earned) is only ever
+    //    actually consumed by the client on a real 60s timeout — so
+    //    claiming N lives used this level means at least N*LEVEL_MS must
+    //    genuinely have elapsed, not just been claimed.
+    if (!lvl.isBonus) {
+      const claimedLifeCount = livesUsedThisLevel + (adLifeUsed ? 1 : 0);
+      const minElapsedForLives = claimedLifeCount * LEVEL_MS;
+      if (elapsedMsAtEnd < minElapsedForLives - TIME_SLACK_MS) {
+        return fail(`Level ${i}: claimed lives used do not fit the elapsed time.`);
+      }
+    }
+    totalMinPlayMs += minElapsedForMoves;
 
     if (!lvl.isBonus) {
       const expectedMoves = SLOT_MOVE_TARGETS[slotIndex];
@@ -526,6 +618,11 @@ function replayAttempt(
     }
 
     if (!lvl.isBonus) slotIndex++;
+    // SECURITY FIX (2026-09-19, §5.1/§6): must reflect THIS level, every
+    // iteration — not just set true and left there — so a bonus can't
+    // follow a failed level, another bonus, or (via the isLast/outcome
+    // check above) anything but a genuinely completed regular slot.
+    lastWasCompletedRegular = !lvl.isBonus && lvl.outcome === 'completed';
   }
 
   return {
@@ -536,6 +633,7 @@ function replayAttempt(
     adLivesUsed,
     levelsReached,
     status: 'completed',
+    totalMinPlayMs,
   };
 }
 
@@ -609,7 +707,7 @@ Deno.serve(async (req: Request) => {
   // point replay at an easier game definition than the one start-attempt
   // actually assigned it. This also confirms attemptId belongs to the
   // calling user before anything else happens.
-  const attemptRow = await admin.from('attempts').select('id, user_id, game_definition_id, status').eq('id', body.attemptId).maybeSingle();
+  const attemptRow = await admin.from('attempts').select('id, user_id, game_definition_id, status, started_at').eq('id', body.attemptId).maybeSingle();
   if (!attemptRow.data) {
     return new Response(JSON.stringify(fail('Unknown attemptId.')), { status: 404, headers: CORS_HEADERS });
   }
@@ -647,6 +745,23 @@ Deno.serve(async (req: Request) => {
 
   const result = replayAttempt(gameDefinitionId, boardsBySlotIndex, body.levels ?? [], verifiedAdSlots);
 
+  // SECURITY FIX (2026-09-19, §5.3/§6): even with every individual level's
+  // elapsedMsAtEnd now floored (see replayAttempt), a payload could still
+  // claim a plausible per-level split while the WHOLE attempt was actually
+  // submitted far too soon after it started. This is the outer check the
+  // report's §6 patch sketch describes — reject if less real wall-clock
+  // time has passed since started_at than the levels themselves could ever
+  // have taken.
+  if (result.valid && typeof result.totalMinPlayMs === 'number' && attemptRow.data.started_at) {
+    const elapsedSinceStart = Date.now() - new Date(attemptRow.data.started_at as string).getTime();
+    if (elapsedSinceStart < result.totalMinPlayMs - TIME_SLACK_MS) {
+      return new Response(
+        JSON.stringify(fail('Submitted too soon after the attempt started for the moves claimed.')),
+        { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
+  }
+
   if (result.valid) {
     // Persistence (closes the Phase 5 "not yet done" gap now that Phase 6
     // supplies a real game_definition_id). score_day is set to today's IST
@@ -654,6 +769,15 @@ Deno.serve(async (req: Request) => {
     // (Section 8: e.g. an attempt started just before midnight, or a late
     // submission) is still a Phase 8 concern, not handled specially here.
     const scoreDay = istDateString();
+    // SECURITY FIX (2026-09-19, §5.4/§6): the earlier status==='completed'
+    // check above (before replay even starts) was a friendly fast-path
+    // only — it and this UPDATE were two separate statements, so two
+    // concurrent submissions of the same attempt could both pass that
+    // check and both reach here, double-counting stats via
+    // record_attempt_completion below. The UPDATE itself now carries the
+    // status condition and its result's row count is checked, making the
+    // in_progress/forfeited -> completed transition atomic: only the first
+    // of two concurrent requests can ever match and update a row.
     const update = await admin
       .from('attempts')
       .update({
@@ -665,7 +789,9 @@ Deno.serve(async (req: Request) => {
         lives_used: result.livesUsed,
         levels_reached: result.levelsReached,
       })
-      .eq('id', body.attemptId);
+      .eq('id', body.attemptId)
+      .in('status', ['in_progress', 'forfeited'])
+      .select('id');
     if (update.error) {
       // The replay itself succeeded and is correct — only the write failed.
       // Surface this distinctly rather than as a validation failure, since
@@ -674,6 +800,15 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({ ...result, persisted: false, persistError: update.error.message }),
         { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
+    if (!update.data || update.data.length === 0) {
+      // Someone else's concurrent request already won the transition (or
+      // the attempt moved to 'completed' between the fast-path check above
+      // and this UPDATE). Stats must NOT be recorded a second time.
+      return new Response(
+        JSON.stringify(fail('This attempt has already been submitted and validated.')),
+        { status: 409, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
       );
     }
 
