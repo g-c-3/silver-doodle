@@ -90,6 +90,7 @@ function istDayBoundsUtc(istDateStr) {
  */
 async function refreshAttemptsLeftToday() {
   const badge = document.getElementById('home-attempts-left');
+  const playBtn = document.getElementById('home-play-btn');
   if (!badge || !state.session) return;
   const { startUtc, endUtc } = istDayBoundsUtc(todayIstDateString());
   const { count, error } = await window.db
@@ -100,6 +101,12 @@ async function refreshAttemptsLeftToday() {
     .lte('started_at', endUtc);
   if (error) {
     badge.querySelector('span').textContent = '';
+    // Unknown count on a query error — leave Play enabled rather than
+    // guess. The server still enforces the real 12/day cap regardless of
+    // what this display shows, so the worst case here is the same
+    // "couldn't start a new game" error this button-disable is meant to
+    // avoid, not a way to bypass the cap.
+    if (playBtn) playBtn.disabled = false;
     return;
   }
   const used = count ?? 0;
@@ -109,9 +116,11 @@ async function refreshAttemptsLeftToday() {
   if (remaining === 0) {
     textEl.textContent = 'All 12 attempts used today — come back tomorrow!';
     badge.classList.add('attempts-none');
+    if (playBtn) playBtn.disabled = true;
   } else {
     textEl.textContent = `${remaining} of ${GAME_COUNT_PER_DAY} attempts left today`;
     if (remaining <= 3) badge.classList.add('attempts-low');
+    if (playBtn) playBtn.disabled = false;
   }
 }
 
@@ -283,10 +292,6 @@ document.getElementById('lb-back-btn').addEventListener('click', () => {
 
 document.getElementById('reveal-start-btn').addEventListener('click', () => {
   Attempt.confirmReveal();
-});
-
-document.getElementById('reveal-skip-btn').addEventListener('click', () => {
-  Attempt.skipBonusFromReveal();
 });
 
 document.getElementById('bonus-play-btn').addEventListener('click', () => {

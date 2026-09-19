@@ -510,13 +510,34 @@ const Attempt = (() => {
   // Turns a playRewardedAd() rejection into text a mobile-only player can
   // actually read and report back — there's no way to check this device's
   // console/Logcat output without a terminal, so whatever the native AdMob
-  // SDK says (most commonly "No fill." on a brand-new or unpublished ad
-  // unit, which is expected and not a code bug) needs to reach the screen
-  // directly rather than only going to console.error().
-  function describeAdError(err) {
+  // SDK says needs to reach the screen directly rather than only going to
+  // console.error().
+  //
+  // "No ad available" (AdMob has nothing to serve — most commonly "No
+  // fill." or "Publisher data not found." on a new/low-traffic ad unit,
+  // not a code bug) gets its own honest, context-specific copy instead of
+  // a generic "ad failed" — context is 'life' or 'bonus', since what
+  // happens next differs (declining a life ends the attempt; declining a
+  // bonus just continues to the next regular level). The underlying
+  // decision — decline, same as any other ad failure — does NOT change
+  // based on this distinction: granting the life/bonus for free on a
+  // claimed no-fill would let a modified client always claim "no ad
+  // available" to get free, unverified rewards, exactly the client-
+  // trusted-flag hole score-replay's ad_verifications check (Phase 10)
+  // exists to close. Wording is the only thing this improves.
+  const NO_AD_AVAILABLE_PATTERNS = [/no fill/i, /publisher data not found/i, /ad request expired/i, /no.?ad.?to.?show/i];
+
+  function describeAdError(err, context) {
     const msg = (err && err.message) || String(err || '');
     if (msg === 'Ad closed before finishing.') {
       return 'Ad was closed before it finished — try again.';
+    }
+    if (NO_AD_AVAILABLE_PATTERNS.some((re) => re.test(msg))) {
+      // 'bonus' deliberately has no trailing clause here — acceptBonus()'s
+      // catch appends "Bonus round skipped this time." itself for every
+      // failure reason, not just this one, so adding it here too would
+      // duplicate it for this specific case.
+      return context === 'bonus' ? 'No ad available right now.' : 'No ad available right now — this attempt ends here.';
     }
     if (msg) {
       return `Ad failed: ${msg}`;
@@ -574,7 +595,7 @@ const Attempt = (() => {
         // check device logs without a terminal, so the actual native
         // AdMob error text (e.g. "No fill.", the most common cause on a
         // new/sideloaded ad unit) needs to reach the player directly.
-        errorLine.textContent = describeAdError(err);
+        errorLine.textContent = describeAdError(err, 'life');
         errorLine.style.display = '';
         // a.locked stays true — the board underneath stays non-interactive
         // until the player picks an option, same as the original lock.
@@ -883,7 +904,7 @@ const Attempt = (() => {
         btn.disabled = false;
         btn.textContent = btn.dataset.defaultLabel;
       }
-      await window.showAlert(`${describeAdError(err)} Bonus round skipped this time.`, 'error');
+      await window.showAlert(`${describeAdError(err, 'bonus')} Bonus round skipped this time.`, 'error');
       prepareLevel({ bonus: false });
     }
   }
@@ -893,10 +914,13 @@ const Attempt = (() => {
   }
 
   // ---- Reveal screen ----
-
-  function skipBonusFromReveal() {
-    prepareLevel({ bonus: false });
-  }
+  // No skip option here for a bonus round, deliberately: the one legitimate
+  // point to decline a bonus round is showBonusPrompt()'s pre-ad "Skip"
+  // button, before any ad is requested. Once acceptBonus() has actually
+  // watched the ad through to completion, the player is committed — there
+  // used to be a second "Skip bonus round" link on this reveal screen too,
+  // letting the ad be watched and then the round declined anyway with
+  // nothing to show for it; removed on request.
 
   function confirmReveal() {
     beginLevel();
@@ -1081,7 +1105,6 @@ const Attempt = (() => {
     el('reveal-sub').textContent = a.isBonusLevel
       ? `${BONUS_SECONDS} seconds · no lives · mix of your last 3 themes`
       : `Clear ${a.levelMovesTarget} moves in ${LEVEL_SECONDS} seconds.`;
-    el('reveal-skip-btn').classList.toggle('hidden', !a.isBonusLevel);
   }
 
   function renderBoard() {
@@ -1201,7 +1224,6 @@ const Attempt = (() => {
   return {
     startAttempt,
     confirmReveal,
-    skipBonusFromReveal,
     acceptBonus,
     skipBonus,
     continueAfterLevelComplete,
