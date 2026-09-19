@@ -251,6 +251,16 @@ const Attempt = (() => {
     a.movesMade = 0;
     a.levelScore = 0; // scratch total for this level only — committed to a.totalScore on completion
     a.locked = false;
+    // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): separate from a.locked
+    // (which is also true during the ad-life prompt) — a.animating is true
+    // ONLY during the 420ms move-resolution window in attemptSwapAt(),
+    // narrowly scoped so tick() can tell "a move is resolving" apart from
+    // "the board is locked for some other reason." a.pendingTimeout is set
+    // when the clock hits zero WHILE a.animating is true, so the move that
+    // was already in flight gets to finish and be judged on its own merits
+    // (did it complete the level?) before the timeout is actually acted on.
+    a.animating = false;
+    a.pendingTimeout = false;
     selectedCell = null;
 
     // Phase 5 payload tracking for this level — see pushLevelRecord() and
@@ -399,6 +409,17 @@ const Attempt = (() => {
     renderTimer(remaining);
     if (remaining <= 0) {
       stopTicking();
+      // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): a move accepted in
+      // the last ~420ms before expiry was previously judged AFTER
+      // handleTimeout() had already fired — burning a life (and, worse,
+      // banking that life's full fresh 60s segment as time bonus) for a
+      // move that may have legitimately cleared the level. Now: if a move
+      // is still resolving, defer — attemptSwapAt()'s own callback decides
+      // what actually happened once the move is done, not this tick.
+      if (a.animating) {
+        a.pendingTimeout = true;
+        return;
+      }
       handleTimeout();
     }
   }
@@ -406,6 +427,8 @@ const Attempt = (() => {
   // ---- Timeout / life handling ----
 
   function handleTimeout() {
+    // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): see failAttempt().
+    if (a.status === 'completed') return;
     if (a.isBonusLevel) {
       // Bonus rounds carry no life risk — whatever was scored stands, and
       // no time bonus is banked for them (only regular slots feed the
@@ -619,6 +642,11 @@ const Attempt = (() => {
   // cleared. See docs/DECISIONS.md's 2026-09-15 entry; this replaces the
   // prior "incomplete level scores 0" rule from ARCHITECTURE.md Section 3.3.
   function failAttempt() {
+    // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): defense-in-depth on top
+    // of the animating/pendingTimeout fix above — if anything ever still
+    // manages to call this after the attempt is already done, it's a no-op
+    // rather than a second 'failed' record and a second submitAttempt().
+    if (a.status === 'completed') return;
     stopTicking();
     clearHints();
     a.totalScore += a.levelScore; // last-shown score is preserved, not dropped
@@ -751,6 +779,10 @@ const Attempt = (() => {
   // ---- Level completion ----
 
   function finishRegularLevel() {
+    // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): see failAttempt()'s
+    // matching comment — this is the specific path the report's race
+    // scenario #2 hit (a move landing after failAttempt() had already run).
+    if (a.status === 'completed') return;
     stopTicking();
     clearHints();
     const leftoverMs = msRemaining();
@@ -787,6 +819,8 @@ const Attempt = (() => {
   }
 
   function finishBonusLevel() {
+    // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): see failAttempt().
+    if (a.status === 'completed') return;
     clearHints();
     a.totalScore += a.levelScore; // bonus score is never subject to the "incomplete = 0" rule
     a.levelsReached++;
@@ -804,6 +838,8 @@ const Attempt = (() => {
   }
 
   function finishAttempt() {
+    // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): see failAttempt().
+    if (a.status === 'completed') return;
     stopTicking();
     clearHints();
     a.status = 'completed';
@@ -1035,6 +1071,7 @@ const Attempt = (() => {
     }
 
     a.locked = true;
+    a.animating = true; // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11) — see tick()
     a.board = result.swappedBoard;
     renderBoard();
 
@@ -1055,11 +1092,21 @@ const Attempt = (() => {
       renderBoard();
       renderHud();
       a.locked = false;
+      a.animating = false;
       clearHints();
       scheduleHintTimer();
 
+      // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): a move that lands
+      // right at expiry is judged on its own result FIRST — if it actually
+      // completed the level, that's what happened, full stop, regardless
+      // of whether the clock also hit zero during its 420ms resolution.
+      // Only if it did NOT complete the level does a deferred timeout (or
+      // one that expires exactly now) actually get acted on.
       if (!a.isBonusLevel && a.movesMade >= a.levelMovesTarget) {
         finishRegularLevel();
+      } else if (a.pendingTimeout || msRemaining() <= 0) {
+        a.pendingTimeout = false;
+        handleTimeout();
       }
     }, 420);
   }
