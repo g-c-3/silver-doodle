@@ -14,22 +14,30 @@
 // to that date's Monday-start week. Both default to "now, in IST" if
 // omitted. `limit` defaults to 50, capped at 200.
 //
-// WHY THE CASCADE IS DONE IN JS, NOT SQL ORDER BY: tiers 2/4/5/7 are
-// per-row *averages* (sum / attempts_completed), and a >1000-player table
-// sorted by a 7-expression tie-break chain (with divide-by-zero guards for
-// players who started but never completed anything) is exactly the kind of
-// thing that's easy to get subtly wrong in raw SQL and hard to unit-test.
-// The scope tables are small (bounded by daily active players, not by
-// attempts), so fetching the whole scope and sorting in Deno is cheap and
-// keeps the comparator logic in one readable, testable place. Revisit if a
-// scope table ever grows large enough for this to matter.
+// SECURITY FIX (2026-09-19, §5.9): the cascade used to be sorted here in
+// JS, over the ENTIRE scope table fetched via PostgREST — see
+// docs/DECISIONS.md's 2026-09-19 (later still) entry for why that broke at
+// scale (PostgREST's 1,000-row cap silently truncating the sort input,
+// and a display-name lookup that put every single user id into one
+// request URL). The cascade itself — same 7 tiers, same tie-break order,
+// same divide-by-zero handling for players with zero completed attempts —
+// now lives in the get_leaderboard_page() SQL function
+// (supabase/migrations/20260919020000_phase12_leaderboard_scaling_fix.sql)
+// so it runs once, in Postgres, over an indexed sort, and only the rows
+// this function actually needs (top N + the caller's own row) ever cross
+// the wire. The comparator/tier logic that used to live in this file
+// (TIERS, compareRows, average()) is gone — this file's job now is just to
+// call that RPC and shape its result into the same response JSON as
+// before, so nothing about the CLIENT'S contract with this function
+// changed.
 //
 // RANKING FOR PLAYERS WHO NEVER COMPLETED AN ATTEMPT: max_score defaults to
 // 0, so a player with attempts_started > 0 but attempts_completed === 0
 // still appears (tied at the bottom on tier 1 with anyone else at 0), but
-// their average tiers (2/4/5/7, all undefined with a 0 divisor) are treated
-// as the worst possible value for that tier's direction so they always lose
-// any tie-break reached that far — see `AVERAGE_SENTINEL` below.
+// their average tiers (2/4/5/7, NULL via NULLIF in SQL now rather than
+// undefined in JS) sort as the worst possible value for that tier's
+// direction via NULLS LAST — see the migration's own comment for why that
+// single rule covers both ASC and DESC tiers.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -41,63 +49,64 @@ const CORS_HEADERS = {
 
 type Scope = 'daily' | 'weekly' | 'all-time';
 
-interface StatsRow {
-  user_id: string;
-  max_score: number;
-  sum_score: number;
-  max_time_bonus_micros: number;
-  sum_time_bonus_micros: number;
-  sum_lives_used: number;
-  sum_levels_played: number;
-  attempts_started: number;
-  attempts_completed: number;
+// One row of get_leaderboard_page()'s result — column names are prefixed
+// (out_*, rnk) in the SQL function to dodge PL/pgSQL's "ambiguous column
+// reference" error against the source tables' own column names.
+interface RankedRow {
+  out_user_id: string;
+  rnk: number;
+  out_max_score: number;
+  out_sum_score: number;
+  out_max_time_bonus_micros: number;
+  out_sum_time_bonus_micros: number;
+  out_sum_lives_used: number;
+  out_sum_levels_played: number;
+  out_attempts_started: number;
+  out_attempts_completed: number;
+  total_players: number;
+  is_caller: boolean;
 }
 
-// One entry per cascade tier, in priority order (ARCHITECTURE.md Section 7).
-// `dir: 'desc'` = higher wins; `dir: 'asc'` = lower wins.
-// `value(row)` returns the comparable number for that tier, already
-// carrying the divide-by-zero guard for the four average tiers.
-const TIERS: {
-  name: string;
-  dir: 'asc' | 'desc';
-  value: (r: StatsRow) => number;
-}[] = [
-  { name: 'Highest single-attempt score', dir: 'desc', value: (r) => r.max_score },
-  { name: 'Average score', dir: 'desc', value: (r) => average(r.sum_score, r.attempts_completed, 'desc') },
-  { name: 'Highest single-attempt time bonus', dir: 'desc', value: (r) => r.max_time_bonus_micros },
-  { name: 'Average time bonus', dir: 'desc', value: (r) => average(r.sum_time_bonus_micros, r.attempts_completed, 'desc') },
-  { name: 'Average lives used (fewer is better)', dir: 'asc', value: (r) => average(r.sum_lives_used, r.attempts_completed, 'asc') },
-  { name: 'Attempts played (fewer is better)', dir: 'asc', value: (r) => r.attempts_started },
-  { name: 'Average levels played (fewer is better)', dir: 'asc', value: (r) => average(r.sum_levels_played, r.attempts_completed, 'asc') },
+// Tier names only — used purely for the human-readable decidingTierName in
+// the response. The actual comparison logic lives in the SQL function now;
+// this list's ORDER must still match it exactly, since decidingTierIndex()
+// below re-derives which tier decided a tie by comparing the same raw
+// values the SQL function already ranked by.
+const TIER_NAMES = [
+  'Highest single-attempt score',
+  'Average score',
+  'Highest single-attempt time bonus',
+  'Average time bonus',
+  'Average lives used (fewer is better)',
+  'Attempts played (fewer is better)',
+  'Average levels played (fewer is better)',
 ];
 
-// A player who never completed an attempt has no meaningful average for
-// this tier — sentinel it to the direction's own worst value so they always
-// lose the tie-break rather than the comparator dividing by zero or two
-// zero-attempt players comparing as "equal" on a tier that's actually
-// undefined for both.
-function average(sum: number, count: number, dir: 'asc' | 'desc'): number {
-  if (count <= 0) return dir === 'desc' ? -Infinity : Infinity;
-  return sum / count;
+function average(sum: number, count: number): number | null {
+  return count > 0 ? sum / count : null;
 }
 
-function compareRows(a: StatsRow, b: StatsRow): number {
-  for (const tier of TIERS) {
-    const av = tier.value(a);
-    const bv = tier.value(b);
-    if (av === bv) continue;
-    return tier.dir === 'desc' ? bv - av : av - bv;
+// First tier (1-indexed) at which two adjacent ranked rows actually
+// differ — i.e. what decided `row` not sharing `betterRow`'s rank. Only
+// ever called on the caller's row against the row directly above it (two
+// rows, not the whole table), so re-deriving the 7 tier values here in JS
+// is cheap and doesn't reintroduce the scaling problem this fix addresses.
+function decidingTierIndex(row: RankedRow, betterRow: RankedRow): number {
+  const tierValues = (r: RankedRow): (number | null)[] => [
+    r.out_max_score,
+    average(r.out_sum_score, r.out_attempts_completed),
+    r.out_max_time_bonus_micros,
+    average(r.out_sum_time_bonus_micros, r.out_attempts_completed),
+    average(r.out_sum_lives_used, r.out_attempts_completed),
+    r.out_attempts_started,
+    average(r.out_sum_levels_played, r.out_attempts_completed),
+  ];
+  const a = tierValues(row);
+  const b = tierValues(betterRow);
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return i + 1;
   }
-  return 0; // fully tied across all 7 tiers — stable order is fine here
-}
-
-// First tier (1-indexed) at which `row` and `betterRow` actually differ —
-// i.e. what decided `row` not outranking the player directly above it.
-function decidingTierIndex(row: StatsRow, betterRow: StatsRow): number {
-  for (let i = 0; i < TIERS.length; i++) {
-    if (TIERS[i].value(row) !== TIERS[i].value(betterRow)) return i + 1;
-  }
-  return TIERS.length; // identical on every tier but ordered by insertion — shouldn't normally happen
+  return TIER_NAMES.length;
 }
 
 function istDateString(): string {
@@ -124,18 +133,18 @@ function fail(error: string) {
   return { error };
 }
 
-function buildEntry(row: StatsRow, rank: number, displayName: string) {
+function buildEntry(row: RankedRow, displayName: string) {
   return {
-    rank,
-    userId: row.user_id,
+    rank: row.rnk,
+    userId: row.out_user_id,
     displayName,
-    score: row.max_score,
-    avgScore: row.attempts_completed > 0 ? Math.round(row.sum_score / row.attempts_completed) : null,
-    timeBonusMicros: row.max_time_bonus_micros,
-    avgTimeBonusMicros: row.attempts_completed > 0 ? Math.round(row.sum_time_bonus_micros / row.attempts_completed) : null,
-    avgLivesUsed: row.attempts_completed > 0 ? Number((row.sum_lives_used / row.attempts_completed).toFixed(2)) : null,
-    attemptsPlayed: row.attempts_started,
-    avgLevelsPlayed: row.attempts_completed > 0 ? Number((row.sum_levels_played / row.attempts_completed).toFixed(2)) : null,
+    score: row.out_max_score,
+    avgScore: row.out_attempts_completed > 0 ? Math.round(row.out_sum_score / row.out_attempts_completed) : null,
+    timeBonusMicros: row.out_max_time_bonus_micros,
+    avgTimeBonusMicros: row.out_attempts_completed > 0 ? Math.round(row.out_sum_time_bonus_micros / row.out_attempts_completed) : null,
+    avgLivesUsed: row.out_attempts_completed > 0 ? Number((row.out_sum_lives_used / row.out_attempts_completed).toFixed(2)) : null,
+    attemptsPlayed: row.out_attempts_started,
+    avgLevelsPlayed: row.out_attempts_completed > 0 ? Number((row.out_sum_levels_played / row.out_attempts_completed).toFixed(2)) : null,
   };
 }
 
@@ -186,71 +195,78 @@ Deno.serve(async (req: Request) => {
 
   const today = istDateString();
   let periodLabel: string;
-  let rows: StatsRow[];
+  let periodKey: string; // date sent to get_leaderboard_page; 'all-time' ignores it but the RPC signature still requires one
 
   if (scope === 'daily') {
-    const statDate = body.date ?? today;
-    periodLabel = statDate;
-    const result = await admin
-      .from('daily_stats')
-      .select('user_id, max_score, sum_score, max_time_bonus_micros, sum_time_bonus_micros, sum_lives_used, sum_levels_played, attempts_started, attempts_completed')
-      .eq('stat_date', statDate);
-    if (result.error) return new Response(JSON.stringify(fail(result.error.message)), { status: 500, headers: CORS_HEADERS });
-    rows = result.data as StatsRow[];
+    periodKey = body.date ?? today;
+    periodLabel = periodKey;
   } else if (scope === 'weekly') {
-    const weekStart = mondayOfWeek(body.date ?? today);
-    periodLabel = weekStart;
-    const result = await admin
-      .from('weekly_stats')
-      .select('user_id, max_score, sum_score, max_time_bonus_micros, sum_time_bonus_micros, sum_lives_used, sum_levels_played, attempts_started, attempts_completed')
-      .eq('week_start', weekStart);
-    if (result.error) return new Response(JSON.stringify(fail(result.error.message)), { status: 500, headers: CORS_HEADERS });
-    rows = result.data as StatsRow[];
+    periodKey = mondayOfWeek(body.date ?? today);
+    periodLabel = periodKey;
   } else {
+    periodKey = today; // unused by the SQL function's 'all-time' branch, but the parameter is not nullable
     periodLabel = 'all-time';
-    const result = await admin
-      .from('all_time_stats')
-      .select('user_id, max_score, sum_score, max_time_bonus_micros, sum_time_bonus_micros, sum_lives_used, sum_levels_played, attempts_started, attempts_completed');
-    if (result.error) return new Response(JSON.stringify(fail(result.error.message)), { status: 500, headers: CORS_HEADERS });
-    rows = result.data as StatsRow[];
   }
 
-  if (rows.length === 0) {
+  // SECURITY FIX (2026-09-19, §5.9): single RPC call replaces the old
+  // fetch-everything-then-sort-in-JS approach. get_leaderboard_page does
+  // the 7-tier ranking in SQL and returns ONLY the top `limit` rows plus
+  // the caller's own row (and, if the caller is outside the top `limit`,
+  // the row directly above them, so decidingTier stays accurate) — never
+  // the whole scope table.
+  const rankedResult = await admin.rpc('get_leaderboard_page', {
+    p_scope: scope,
+    p_period_key: periodKey,
+    p_caller_id: user.id,
+    p_limit: limit,
+  });
+  if (rankedResult.error) return new Response(JSON.stringify(fail(rankedResult.error.message)), { status: 500, headers: CORS_HEADERS });
+  const rankedRows = (rankedResult.data ?? []) as RankedRow[];
+
+  if (rankedRows.length === 0) {
     return new Response(
       JSON.stringify({ scope, periodLabel, totalPlayers: 0, top: [], you: null }),
       { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );
   }
 
-  rows.sort(compareRows);
+  const totalPlayers = rankedRows[0].total_players;
 
-  // Display names, batched in one query rather than N+1 — leaderboard_profiles
-  // is the RLS-safe public view (id, display_name only, no email).
+  // Display names for exactly the rows returned above (top N + caller +
+  // maybe one extra row for decidingTier) — never more than ~limit+2 ids,
+  // so this can never approach the URL-length problem §5.9 found: the old
+  // code put every single player in the scope into this same query.
   const namesResult = await admin
     .from('leaderboard_profiles')
     .select('id, display_name')
-    .in('id', rows.map((r) => r.user_id));
+    .in('id', rankedRows.map((r) => r.out_user_id));
   if (namesResult.error) return new Response(JSON.stringify(fail(namesResult.error.message)), { status: 500, headers: CORS_HEADERS });
   const nameById = new Map<string, string>(namesResult.data.map((n) => [n.id, n.display_name]));
 
-  const top = rows.slice(0, limit).map((r, i) => buildEntry(r, i + 1, nameById.get(r.user_id) ?? 'Unknown'));
+  // The RPC can return one extra row (the caller's decidingTier reference
+  // row, rnk = callerRank - 1) when the caller is outside the top `limit`
+  // — exclude it from the public top list, it was only fetched for the
+  // comparison below.
+  const top = rankedRows
+    .filter((r) => r.rnk <= limit)
+    .map((r) => buildEntry(r, nameById.get(r.out_user_id) ?? 'Unknown'));
 
-  const callerIndex = rows.findIndex((r) => r.user_id === user.id);
+  const callerRow = rankedRows.find((r) => r.is_caller);
   let you: ReturnType<typeof buildEntry> & { inTop: boolean; decidingTier: number | null; decidingTierName: string | null } | null = null;
-  if (callerIndex !== -1) {
-    const rank = callerIndex + 1;
-    const entry = buildEntry(rows[callerIndex], rank, nameById.get(user.id) ?? 'You');
-    const decidingTier = callerIndex === 0 ? null : decidingTierIndex(rows[callerIndex], rows[callerIndex - 1]);
+  if (callerRow) {
+    const entry = buildEntry(callerRow, nameById.get(user.id) ?? 'You');
+    const aboveRow = rankedRows.find((r) => r.rnk === callerRow.rnk - 1);
+    const decidingTier = callerRow.rnk === 1 ? null : aboveRow ? decidingTierIndex(callerRow, aboveRow) : null;
     you = {
       ...entry,
-      inTop: rank <= limit,
+      inTop: callerRow.rnk <= limit,
       decidingTier,
-      decidingTierName: decidingTier !== null ? TIERS[decidingTier - 1].name : null,
+      decidingTierName: decidingTier !== null ? TIER_NAMES[decidingTier - 1] : null,
     };
   }
 
   return new Response(
-    JSON.stringify({ scope, periodLabel, totalPlayers: rows.length, top, you }),
+    JSON.stringify({ scope, periodLabel, totalPlayers, top, you }),
     { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
   );
 });
