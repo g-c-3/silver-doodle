@@ -8,6 +8,32 @@
   --danger: #ff5c5c;
   --gold: #f5b942;
   --radius: 16px;
+
+  /* Single source of truth for "how big does a game tile render", shared
+     by .game-board/.game-cell AND .ticket-emojis (the theme-reveal
+     screen), so the reveal ticket's emoji are always exactly the size
+     they'll actually be during play, not a separately-tuned guess.
+     --board-width duplicates .game-board's own width formula rather than
+     the other way around, specifically so it's defined once, here, and
+     .game-board just references it — previously .game-cell's font-size
+     was computed from `vw` alone (clamp(15px, 4vw, 22px)), which drifts
+     out of sync with the real cell size whenever 54dvh or the 460px cap
+     -- not 94vw -- is what's actually constraining the board (e.g.
+     landscape orientation, which nothing in this app locks out: measured
+     one such case at 22px font vs a real ~21.5px cell, the glyph already
+     overflowing its own tile). Deriving both from the exact same min()
+     expression means whichever of the three constraints binds, the tile
+     size — and the ticket's emoji size, matching it — are still correct
+     together, everywhere, automatically. */
+  --board-width: min(94vw, 54dvh, 460px);
+  --tile-cell-size: calc((var(--board-width) - 12px - 28px) / 8); /* 12px = 2x .game-board's 6px padding; 28px = 7x its 4px gap */
+  /* 62% of the tile edge: chosen to sit comfortably above the previous
+     ~38-42% fill (measured across common phone widths) while leaving
+     real margin before the glyph's own internal padding runs out and it
+     starts crowding the 1.5px border / 4px inter-tile gap. clamp()'s
+     12px/36px floor and ceiling are just a safety net for degenerate
+     viewports (e.g. a tiny multi-window split), not the normal range. */
+  --tile-font-size: clamp(12px, calc(var(--tile-cell-size) * 0.62), 36px);
 }
 
 * {
@@ -879,7 +905,7 @@ a.primary {
 }
 
 .game-board {
-  width: min(94vw, 54dvh, 460px);
+  width: var(--board-width);
   aspect-ratio: 1 / 1;
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -901,7 +927,7 @@ a.primary {
   background: transparent;
   border: 1.5px solid #34304a;
   border-radius: 8px;
-  font-size: clamp(15px, 4vw, 22px);
+  font-size: var(--tile-font-size);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1134,9 +1160,18 @@ a.primary {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px 14px;
-  max-width: 220px;
+  /* Was a fixed 220px/30px pair, tuned once for one screen width and
+     never revisited. Now derived from the same --tile-font-size the game
+     board itself uses (see :root), so these are always exactly the size
+     they'll actually be during play -- not a separate, independently
+     guessed number that happens to drift alongside it. max-width scales
+     with the same ratio the original fixed pair had (a 64px column at a
+     30px font, times 3 columns, plus the column gaps) so the grid's
+     spacing feels the same proportionally at every tile size, not just
+     the one width the old fixed 220px was tuned for. */
+  max-width: calc(var(--tile-font-size) * 6.4 + 28px);
   margin: 0 auto 10px;
-  font-size: 30px;
+  font-size: var(--tile-font-size);
   line-height: 1;
 }
 
