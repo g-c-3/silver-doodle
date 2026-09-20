@@ -276,6 +276,14 @@
       <p id="profile-email-error" class="error hidden"></p>
 
       <button id="profile-sign-out-btn" type="button" class="danger">Sign out</button>
+
+      <!-- ADDED 2026-09-19 (report-2.3, §5.10/§5.14): Google Play requires
+           an in-app path to delete the account and all its data, not just
+           email/contact-based deletion. See delete-account/index.ts and
+           app.js's confirm-dialog wiring below. -->
+      <button id="profile-delete-account-btn" type="button" class="danger">Delete account</button>
+      <p id="profile-delete-account-error" class="error hidden"></p>
+
       <button id="profile-back-btn" type="button" class="link">Back</button>
     </div>
   </section>
