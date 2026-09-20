@@ -125,10 +125,24 @@ const Attempt = (() => {
   const HINT_IDLE_MS = 5000; // no successful move for this long -> highlight all available moves
   const HEARTBEAT_INTERVAL_MS = 20000; // proves liveness to the Phase 8 forfeit-detection sweep
 
-  // Phase 1's registered AdMob Rewarded ad unit (docs/ARCHITECTURE.md
-  // Section 12) — usable for development as-is; Phase 12 swaps to a
-  // separate production unit ID, not this constant, when that phase lands.
-  const ADMOB_REWARDED_AD_UNIT_ID = 'ca-app-pub-6922359485200410/1441491988';
+  // COMPLIANCE FIX (2026-09-19, §5.14, report-2.3): this constant used to
+  // be the real, live production ad unit ID, hardcoded with no test-mode
+  // distinction — meaning every sideloaded dev/test build (which is EVERY
+  // build produced so far; see docs/ROADMAP.md, Play Store submission is
+  // still a later phase) was generating real impressions/clicks against a
+  // live AdMob unit outside AdMob's own traffic-quality expectations for
+  // dev testing, which risks the account being flagged for invalid
+  // traffic. Default is now Google's own official sample rewarded-video
+  // test unit ID (verified against Google's AdMob developer docs directly,
+  // not assumed) — always returns a test creative, never counts as real
+  // traffic, safe to click on repeatedly during testing. The real
+  // production unit ID is injected over this placeholder only by an
+  // explicit, opt-in CI step (see .github/workflows/build-apk.yml's
+  // "Inject production AdMob unit ID" step) gated behind a
+  // workflow_dispatch input that defaults to false — every normal
+  // push-triggered build, which is still all of them today, keeps using
+  // this test ID automatically with no action needed.
+  const ADMOB_REWARDED_AD_UNIT_ID = 'ca-app-pub-3940256099942544/5224354917';
 
   let a = null; // current attempt state
   let selectedCell = null; // [r,c] or null — used by the tap-tap flow only
