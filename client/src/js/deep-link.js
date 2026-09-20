@@ -1,6 +1,8 @@
 // Match Emojis Daily — native deep-link handoff for magic-link sign-in
 //
-// Problem this solves: signInWithOtp() uses Supabase's PKCE flow by default,
+// Problem this solves: signInWithOtp() uses PKCE (explicitly configured in
+// supabaseClient.js — see that file's own comment on why "Supabase's
+// default" was the wrong assumption to build this on, until 2026-09-19),
 // which stores a code_verifier in whichever origin actually called it. The
 // emailed magic link always opens in the OS's system browser regardless of
 // where sign-in was requested — a completely different origin/localStorage
@@ -55,8 +57,9 @@
     const query = new URLSearchParams(url.search);
     const hash = new URLSearchParams((url.hash || '').replace(/^#/, ''));
 
-    // PKCE flow (Supabase's current default) — what a signInWithOtp() magic
-    // link actually produces today.
+    // PKCE flow — what a signInWithOtp() magic link actually produces now
+    // that supabaseClient.js explicitly sets flowType: 'pkce' (2026-09-19).
+    // This is the live, expected path going forward.
     const code = query.get('code');
     if (code) {
       const { error } = await window.db.auth.exchangeCodeForSession(code);
@@ -67,9 +70,18 @@
       return;
     }
 
-    // Implicit flow fallback — not what this project's Supabase client is
-    // currently configured for, but handled in case that ever changes, so
-    // this file doesn't need editing again if it does.
+    // Implicit flow fallback. NOT a defensive branch for a hypothetical
+    // future change — until 2026-09-19 this was actually the ONLY branch
+    // that ever fired, because signInWithOtp() had no flowType override
+    // and Supabase's real default is 'implicit', not 'pkce' as earlier
+    // comments here assumed (see supabaseClient.js and DECISIONS.md's
+    // 2026-09-19 (later still) correction entry). Kept intentionally
+    // rather than deleted now that PKCE is configured — report-2.3's own
+    // author tried deleting this exact branch in an earlier draft and
+    // caught, via testing, that it broke sign-in entirely; not repeating
+    // that mistake here. A stale cached link from before this change, or
+    // any other edge case that still produces tokens instead of a code,
+    // falls through to this and still works.
     const accessToken = hash.get('access_token');
     const refreshToken = hash.get('refresh_token');
     if (accessToken && refreshToken) {
