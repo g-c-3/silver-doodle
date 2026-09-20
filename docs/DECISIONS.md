@@ -2,6 +2,14 @@
 
 ADR-style log, most recent at bottom of each dated block. Written in impersonal third person; no attribution to individuals.
 
+## 2026-09-21 — GitHub Actions SHA-pinning: pin-don't-upgrade, and verify against live upstream data rather than a generator
+
+**SHA-pinning was scoped to "pin the currently-running major version," not "adopt the latest major version."** `actions/checkout`, `actions/setup-node`, `actions/setup-java`, and `actions/upload-artifact` all have newer majors published upstream than what this repo's workflows were using (e.g. checkout has a v7, this repo used v4). Bundling a major-version bump into a supply-chain-hardening pass would mean shipping an unrelated, potentially breaking change (new action major versions can change input/output contracts) at the same time as a change whose entire point is reducing what changes silently under a workflow. Kept separate: pin what's already confirmed green in CI at its current version; treat any future major-version bump as its own deliberate, tested decision.
+
+**Every SHA was verified directly against each action's real upstream repo via `git ls-remote --tags`, not taken from a third-party SHA-pinning tool's output or reasoned from memory.** Search results surfaced several examples of exactly this going wrong elsewhere (SHAs attributed to the wrong version in copy-pasted PR suggestions) — the entire value of SHA-pinning depends on the SHA being correct for the intended version, so verifying against live data rather than trusting a generated list was treated as non-negotiable here, not a nice-to-have.
+
+**A stale `supabase/setup-cli@v1` reference was found as a side effect of that verification, and re-pointed rather than left as a pinned-but-dead reference.** `git ls-remote` showed the `v1` tag no longer exists at all in `supabase/setup-cli`'s upstream repo — it's been removed, with the project's versioning having since moved through a `v2` line to `v3`. This was a real latent break (the next time `deploy-functions.yml` ran, `supabase/setup-cli@v1` would very likely have failed to resolve), not merely a hardening gap — SHA-pinning a reference that no longer points anywhere would have been pointless, so this was re-pointed to `v3.0.0` (the latest available major) instead of pinned as-is.
+
 ## 2026-09-20 — External security review worked through; several standalone decisions made along the way
 
 **Note on dating:** this entry, and several ROADMAP.md/SESSIONS.md entries from the same continuous session, are dated 2026-09-19 — that date was carried forward from the prior session's most recent entry at the start of this one and never re-checked against the actual calendar date, which is 2026-09-20. Not corrected retroactively across every already-delivered file; flagged here instead so a future reader isn't confused by the apparent gap. Dates going forward will be checked against the actual current date rather than assumed from context.
