@@ -747,23 +747,65 @@ const Attempt = (() => {
       if (a.attemptId !== myAttemptId) return;
       a.submitting = false;
 
-      // A retry can legitimately land after an earlier try actually
-      // succeeded server-side but its response never made it back (e.g. the
-      // connection dropped right after the server wrote the row). score-
-      // replay reports that as a 409 "already submitted" — good news, not a
-      // failure — so it's worth unwrapping the structured body rather than
-      // treating it like every other network error and retrying forever.
+      // SECURITY/CORRECTNESS FIX (2026-09-19, §5.19, report-2.3): every
+      // non-2xx response from score-replay throws here — supabase-js does
+      // not distinguish a real, definitive rejection (a forged payload,
+      // an already-completed attempt, a too-late forfeit) from a genuine
+      // network failure. Previously only the 409 "already submitted" case
+      // unwrapped the structured body; everything else — including a
+      // legitimate 400 rejection with a real reason attached — fell
+      // through to the network-failure branch below, which retried it
+      // (pointlessly: a definitively-invalid payload fails identically
+      // every time) and then told the player "Could not reach the
+      // server," which is simply false and erodes trust in the message
+      // the NEXT time it's shown for an actual network problem.
       let structured = null;
       if (err && err.context && typeof err.context.json === 'function') {
         try { structured = await err.context.json(); } catch { /* not JSON — a genuine network failure, fall through */ }
       }
-      if (structured && typeof structured.error === 'string' && /already been submitted/i.test(structured.error)) {
-        a.serverResult = { valid: false, error: 'Already saved on the server — check History for your final score.', alreadySaved: true };
-        stopHeartbeat(); // the row is genuinely completed server-side now, safe to stop
+
+      if (structured && typeof structured.error === 'string') {
+        if (/already been submitted/i.test(structured.error)) {
+          // Good news, not a failure — an earlier try likely succeeded
+          // server-side but its response never made it back.
+          a.serverResult = { valid: false, error: 'Already saved on the server — check History for your final score.', alreadySaved: true };
+          stopHeartbeat();
+          if (el('screen-attempt-summary') && !el('screen-attempt-summary').classList.contains('hidden')) renderSummary();
+          return;
+        }
+        if (/no verified ad completion found/i.test(structured.error)) {
+          // The ONE structured-rejection case that's still genuinely worth
+          // retrying automatically: score-replay already waits ~3s and
+          // re-checks server-side (§5.5) before returning this, but
+          // Google's SSV callback can occasionally take longer than that.
+          // Gets its own message rather than the generic network one.
+          const retryIndex = a.submitAttempts - 1;
+          if (retryIndex < SUBMIT_RETRY_DELAYS_MS.length) {
+            a.serverResult = { valid: false, error: 'Confirming your ad reward — this can take a few seconds…', retrying: true };
+            renderSummary();
+            setTimeout(() => {
+              if (a.attemptId === myAttemptId) submitAttempt();
+            }, SUBMIT_RETRY_DELAYS_MS[retryIndex]);
+            return;
+          }
+          a.serverResult = { valid: false, error: 'Your ad reward could not be confirmed in time. Tap Retry to check again.' };
+          stopHeartbeat();
+          if (el('screen-attempt-summary') && !el('screen-attempt-summary').classList.contains('hidden')) renderSummary();
+          return;
+        }
+        // Any other structured rejection is definitive — the payload was
+        // read and judged, not lost in transit. Show the real reason, do
+        // not retry (it would just fail identically), and end the
+        // attempt's lifecycle same as a successful submission would.
+        a.serverResult = { valid: false, error: structured.error, noRetry: true };
+        stopHeartbeat();
         if (el('screen-attempt-summary') && !el('screen-attempt-summary').classList.contains('hidden')) renderSummary();
         return;
       }
 
+      // No structured body at all — a genuine network failure (dropped
+      // connection, CORS, DNS, a 5xx with no JSON body), where retrying
+      // and eventually saying "could not reach the server" is accurate.
       const retryIndex = a.submitAttempts - 1; // 0-based into SUBMIT_RETRY_DELAYS_MS
       if (retryIndex < SUBMIT_RETRY_DELAYS_MS.length) {
         a.serverResult = { valid: false, error: 'Could not reach the server — retrying…', retrying: true };
@@ -1271,10 +1313,12 @@ const Attempt = (() => {
       el('summary-lives').textContent = '—';
       el('summary-levels').textContent = '—';
       el('summary-status-message').textContent = `Not validated — ${r.error || 'unknown error'}`;
-      // No Retry button while an automatic retry is already scheduled, or
+      // No Retry button while an automatic retry is already scheduled,
       // once the server's confirmed the row is already saved (retrying
-      // that case would only ever hit the same 409 again).
-      if (retryBtn) retryBtn.classList.toggle('hidden', !!r.retrying || !!r.alreadySaved);
+      // that case would only ever hit the same 409 again), or when the
+      // rejection is definitive — a forged/invalid payload fails the same
+      // way every time, so a Retry button can't offer anything real.
+      if (retryBtn) retryBtn.classList.toggle('hidden', !!r.retrying || !!r.alreadySaved || !!r.noRetry);
       return;
     }
     // Server-authoritative figures — this is what actually counts once
