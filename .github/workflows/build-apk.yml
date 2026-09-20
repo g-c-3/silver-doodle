@@ -30,6 +30,24 @@ name: Build Android APK
 # Never run any of these steps locally -- this workflow is the only
 # supported way to produce an APK. See docs/ROADMAP.md and
 # docs/ARCHITECTURE.md Section 11 for the reasoning.
+#
+# SHA-PINNED 2026-09-21 (open item from both security reports, §5.20-class
+# supply-chain hardening): every third-party `uses:` step below is now
+# pinned to the exact commit SHA that its previously-used major-version tag
+# (v4/v2) currently resolves to, not just a version bump -- a floating tag
+# like @v4 can be force-moved by the action's maintainer (or an attacker
+# who compromises their account) to point at different code without this
+# workflow file ever changing. The `# vX.Y.Z` comment after each SHA is
+# for human readability only and is not itself trusted by GitHub Actions.
+# Verified directly against each action repo's real tag->commit mapping via
+# `git ls-remote --tags`, not copied from a third-party pin-generator's
+# output. Deliberately did not bump any action to a newer major version
+# (checkout/setup-node/setup-java/upload-artifact all have a newer major
+# available upstream, e.g. checkout v7, upload-artifact v7) -- that's a
+# separate, riskier change (behavior/breaking-change surface) than pinning
+# what's already running and confirmed green in CI; revisit as its own,
+# deliberate upgrade decision later, not bundled into a security-hardening
+# pass.
 
 on:
   push:
@@ -64,10 +82,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           # FIXED 2026-09-17, from the second live run's actual log:
           # @capacitor/cli@8.5.2 refuses to run at all below Node 22
@@ -76,7 +94,7 @@ jobs:
           node-version: 22
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           # FIXED 2026-09-17, from the third live run's actual log:
@@ -227,14 +245,14 @@ jobs:
           echo "path=$apk_path" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK as a workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: match-emojis-daily-build-${{ github.run_number }}
           path: ${{ steps.apk.outputs.path }}
           retention-days: 30
 
       - name: Attach APK to a GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}

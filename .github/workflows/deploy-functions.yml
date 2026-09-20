@@ -26,10 +26,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        # SHA-PINNED + RE-POINTED 2026-09-21: while pinning this step for
+        # the same supply-chain reason as the checkout step above, the
+        # previously-used `@v1` tag turned out to no longer exist at all in
+        # supabase/setup-cli's upstream repo (confirmed directly via
+        # `git ls-remote --tags` -- no v1, v1.x, or v1-pointing ref of any
+        # kind remains; the repo has since moved through v2 to v3). A
+        # floating major-version tag being deleted out from under a workflow
+        # is exactly the kind of drift SHA-pinning is meant to catch before
+        # it causes a real failure -- this one just hadn't broken yet only
+        # because this workflow hadn't re-run since the tag was removed.
+        # Re-pointed to the latest available major (v3.0.0) rather than
+        # pinned to a dead reference.
+        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
           version: latest
 
