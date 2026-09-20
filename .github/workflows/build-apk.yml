@@ -6,8 +6,26 @@ name: Build Android APK
 # run using the real @capacitor/cli (pinned exact versions in
 # client/package.json, so the generated template's shape stays stable run
 # to run -- see .github/workflows/scripts/patch_build_gradle.py, which
-# depends on that), then injects the Phase 1 secrets (signing keystore,
-# Firebase config) into that freshly-generated project before building.
+# depends on that), then injects the Phase 1 signing keystore secrets into
+# that freshly-generated project before building.
+#
+# REMOVED 2026-09-19 (report-2.3): this workflow used to also write a
+# Firebase google-services.json from a secret and let Capacitor's generated
+# build.gradle conditionally apply the google-services Gradle plugin when
+# that file existed. Turned out that plugin only processes the config into
+# resource values -- it does not pull in any Firebase SDK code by itself,
+# and this project never declared the actual Firebase dependencies
+# (firebase-analytics, firebase-crashlytics) or a Capacitor plugin for
+# them anywhere. So that step was live but functionally inert: it embedded
+# a Firebase Web API key into the shipped APK's resources for zero
+# benefit, confirmed by report-2.3's real APK decompilation finding no
+# Firebase SDK classes at all. See docs/DECISIONS.md's 2026-09-19 (later
+# still) entry. If Firebase Analytics/Crashlytics is wanted, it needs a
+# real implementation pass (Gradle dependencies + a Capacitor plugin or
+# native bridge code + actual client-side event calls), not just this
+# config-writing step reinstated. The GOOGLE_SERVICES_JSON secret this
+# step used to read is no longer needed by this workflow -- safe to delete
+# from the repo's secrets once confirmed nothing else depends on it.
 #
 # Never run any of these steps locally -- this workflow is the only
 # supported way to produce an APK. See docs/ROADMAP.md and
@@ -179,15 +197,6 @@ jobs:
           KEOF
           # Never echoed and never committed -- both files live only in this
           # ephemeral runner workspace and vanish when the job ends.
-
-      - name: Write Firebase config
-        run: |
-          cat > client/android/app/google-services.json << 'GSJSON'
-          ${{ secrets.GOOGLE_SERVICES_JSON }}
-          GSJSON
-          # app/build.gradle only applies the google-services Gradle plugin
-          # if this file exists and is non-empty (Capacitor's own generated
-          # try/catch) -- so this is enough on its own, no further wiring.
 
       - name: Register the auth-callback deep link
         # Adds the matchemojisdaily://auth-callback custom-scheme
