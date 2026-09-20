@@ -68,30 +68,50 @@ const Attempt = (() => {
   // bear all tawny-brown, or hamster/rabbit/mouse all small pale rodents).
   // Every glyph is unique across the whole set — verified in the sandbox
   // before delivery, not just assumed.
+  // SECURITY/COMPATIBILITY FIX (2026-09-19, §5.13): the 7 glyphs below
+  // that used to be 🦭 🪲 🧋 🪚 🪜 🧌 🪼 were Emoji 13.0–15.0 — unsupported
+  // on a real share of this app's target devices, rendering as blank boxes
+  // (see docs/DECISIONS.md's 2026-09-19 (later still) entry). Two blank
+  // tiles in the same theme are indistinguishable, so a valid match looked
+  // like a non-match. Replaced with Emoji ≤12.0 equivalents (verified via
+  // web search against Unicode's own emoji-data.txt / Emojipedia, not
+  // assumed from memory — 🦐 Emoji 9.0, 🦑 Emoji 3.0, 🧙 Emoji 5.0, the
+  // rest Emoji 0.6–1.0) and minSdk raised to 29 (Android 10) below, which
+  // is the actual floor Emoji 12.0 needs — see client/android's generated
+  // build.gradle / .github/workflows/scripts/patch_build_gradle.py for
+  // where that's enforced. Chosen to keep each theme thematically
+  // coherent and every glyph within a theme still visually distinct:
+  //   Sea Creatures:    🦭 seal      -> 🦐 shrimp
+  //   Insects & Bugs:   🪲 beetle    -> 🐜 ant
+  //   Drinks:           🧋 boba      -> 🍹 tropical drink
+  //   Tools & Hardware: 🪚 saw       -> 🔨 hammer
+  //                     🪜 ladder    -> 🔧 wrench
+  //   Fantasy Creatures: 🧌 troll    -> 🧙 mage
+  //   Ocean & Reef:      🪼 jellyfish -> 🦑 squid
   const THEMES = [
     { name: 'Pets', emojis: ['🐶', '🐱', '🐰', '🦔', '🐢', '🐾'] },
     { name: 'Farm Animals', emojis: ['🐮', '🐴', '🐑', '🦃', '🐔', '🦆'] },
     { name: 'Wild Animals', emojis: ['🐯', '🐼', '🐘', '🦓', '🦒', '🦏'] },
     { name: 'Faces & Emotions', emojis: ['😍', '😎', '🥳', '😡', '🤯', '🥶'] },
     { name: 'Birds', emojis: ['🦉', '🦜', '🐤', '🦢', '🦩', '🦚'] },
-    { name: 'Sea Creatures', emojis: ['🐠', '🐡', '🦈', '🐬', '🐳', '🦭'] },
-    { name: 'Ocean & Reef', emojis: ['🦀', '🐙', '🪼', '🐚', '🦞', '🐌'] },
+    { name: 'Sea Creatures', emojis: ['🐠', '🐡', '🦈', '🐬', '🐳', '🦐'] },
+    { name: 'Ocean & Reef', emojis: ['🦀', '🐙', '🦑', '🐚', '🦞', '🐌'] },
     { name: 'Reptiles & Amphibians', emojis: ['🐊', '🐍', '🦎', '🐸', '🦖', '🦕'] },
-    { name: 'Insects & Bugs', emojis: ['🐝', '🐞', '🐛', '🕷️', '🪲', '🦋'] },
-    { name: 'Fantasy Creatures', emojis: ['🐉', '🦄', '🧜', '🧚', '🧌', '👻'] },
+    { name: 'Insects & Bugs', emojis: ['🐝', '🐞', '🐛', '🕷️', '🐜', '🦋'] },
+    { name: 'Fantasy Creatures', emojis: ['🐉', '🦄', '🧜', '🧚', '🧙', '👻'] },
     { name: 'Fruits', emojis: ['🍏', '🍊', '🍌', '🍇', '🍓', '🍉'] },
     { name: 'Tropical Fruits', emojis: ['🍍', '🍑', '🥝', '🍒', '🥥', '🍋'] },
     { name: 'Vegetables', emojis: ['🥕', '🥦', '🍆', '🌽', '🧄', '🍅'] },
     { name: 'Desserts & Sweets', emojis: ['🍰', '🎂', '🍭', '🍫', '🧁', '🍪'] },
     { name: 'Fast Food & Snacks', emojis: ['🍕', '🍔', '🍟', '🌮', '🥙', '🥨'] },
-    { name: 'Drinks & Beverages', emojis: ['☕', '🧋', '🥛', '🧃', '🍺', '🍷'] },
+    { name: 'Drinks & Beverages', emojis: ['☕', '🍹', '🥛', '🧃', '🍺', '🍷'] },
     { name: 'Musical Instruments', emojis: ['🎸', '🎹', '🥁', '🪕', '🎷', '🎤'] },
     { name: 'Sports Equipment', emojis: ['⚽', '🏈', '🎾', '🥎', '🏀', '🥊'] },
     { name: 'Land Vehicles', emojis: ['🚗', '🚌', '🚚', '🚜', '🏍️', '🚲'] },
     { name: 'Air & Sea Vehicles', emojis: ['✈️', '🚁', '🚀', '🚢', '⛵', '🛸'] },
     { name: 'Weather & Sky', emojis: ['☀️', '🌧️', '⚡', '❄️', '🌈', '🌪️'] },
     { name: 'Space & Celestial', emojis: ['🪐', '🌍', '🌙', '⭐', '☄️', '🌕'] },
-    { name: 'Tools & Hardware', emojis: ['🪚', '⚙️', '🧰', '🪜', '🧲', '📏'] },
+    { name: 'Tools & Hardware', emojis: ['🔨', '⚙️', '🧰', '🔧', '🧲', '📏'] },
     { name: 'Electronics & Gadgets', emojis: ['🤖', '💻', '⌚', '🕹️', '🔋', '💡'] },
     { name: 'Card & Game Pieces', emojis: ['🎲', '♟️', '🧩', '🎳', '🎯', '🎰'] },
     { name: 'Seasonal & Holiday', emojis: ['🎄', '🧨', '🎁', '🎊', '🥚', '🕯️'] },
