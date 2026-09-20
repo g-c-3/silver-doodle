@@ -4,6 +4,32 @@ Most recent entry first.
 
 ---
 
+**2026-09-20 (dated 2026-09-19 in earlier entries this same session — see DECISIONS.md's dating note) — External security review worked through end to end; account deletion feature built; SMTP setup started but not finished**
+
+Continuation of the same session as the entry below. A two-round external code review (`report.md`, then a follow-up `report-2.3.md` with corrections and new findings) was worked through almost entirely — every finding independently re-verified against the actual live code first, several confirmed false or already-resolved along the way (§5.2's RPC-privilege concern checked out as *not* vulnerable on the live project; §5.11's report-2.3 addendum was traced by hand against the already-shipped fix and found to already be closed). A separately-uploaded patch package was deliberately not applied — see DECISIONS.md for why. Full technical detail of every fix lives in ROADMAP.md's expanded Phase 12 section, not repeated here; short version: score-replay validation hardened (bonus rounds, time-bonus forgery, atomic completion, forfeit window, ad-verification race), the two cron functions gated behind a shared secret, a display-name privacy migration written, leaderboard ranking moved into SQL for real scaling, a client-side timer/animation race fixed and traced twice, supabase-js vendored + a real CSP added, 7 incompatible emoji glyphs swapped and `minSdk` raised to 29 (user-approved tradeoff), the auth flow switched from implicit to PKCE (unverified on-device, flagged repeatedly), a dead Firebase CI step removed, and the production AdMob unit ID gated behind an explicit release flag instead of being live on every dev build.
+
+Built fresh, not from either report: a full account-deletion feature (Edge Function, Profile-screen UI, and a new `account-deletion.html` page) to satisfy Google Play's policy, verified directly against Google's current wording rather than assumed. Found and fixed in passing while in `profile.js` for that: `looksLikeDefaultName()` would have silently broken the moment the display-name migration above actually runs.
+
+Also found by chance, not from either report, while writing this very docs update: `early-auth-handoff.js` (extracted from the live repo earlier the same session for the CSP fix) had regressed to a plain automatic redirect, the exact approach ARCHITECTURE.md's own history says was already tried and found broken via real on-device testing back on 2026-09-17. Rebuilt as the confirmed-working tappable-button design, rewritten for CSP compliance (DOM construction + direct style-property assignment, no inline `style=""`). Flagged to the user before fixing rather than folded in silently, specifically to avoid compounding two unverified auth-flow changes into one untested batch.
+
+SMTP setup guidance given in detail (Resend/Brevo/SES compared on real, currently-verified free-tier limits) after independently confirming why the current setup can't work for anyone outside the Supabase org. User began Resend's domain-verification step, then explicitly deferred finishing it.
+
+**Bugs fixed:** all of the above; plus two small self-corrections caught mid-edit rather than after delivery — a `.danger-outline` CSS class referenced that doesn't exist (fixed to reuse the existing `.danger` class before shipping), and a "Section 6" cross-reference in `privacy-policy.html` that was already wrong before today's edit (should have been Section 10 all along).
+
+**Decisions made:** see DECISIONS.md's 2026-09-20 entry — rejecting the external patch package, shipping the PKCE fix without a device test (and why that's a deliberate exception to this session's normal standard), removing rather than implementing the dead Firebase step, the `minSdk` tradeoff (user-approved), the account-deletion design (hard delete, self-service only), and SMTP being genuinely left open rather than resolved.
+
+**Next session start point — several independent threads, none blocking each other:**
+1. **Finish SMTP setup** (Resend domain verification → API key → paste into Supabase's SMTP Settings → raise the Auth rate limit → test with a real outside email address) — this is the actual launch blocker; nothing else in Phase 12 matters until sign-in works for non-team members.
+2. **Run the two pending migrations** against the live project via the Supabase SQL Editor: `20260919010000_phase12_display_name_privacy_fix.sql` and `20260919020000_phase12_leaderboard_scaling_fix.sql` — review the display-name backfill's commented-out `SELECT` first; test the leaderboard migration against a copy of the project before production, it fails open (breaks the leaderboard) rather than closed if something's wrong.
+3. **Set `CRON_SECRET`** as a project secret and update both Cron Trigger configs (`generate-daily-games`, `forfeit-stale-attempts`) with the matching `x-cron-secret` header — the code fix does nothing until this manual step happens; the daily cron will 403 until then.
+4. **Device-test the full sign-in flow before trusting either change to it** — this session made two independent, unverified changes to the same flow: the PKCE flip, and the deep-link handoff rebuild. Test both together: sign in fresh from a cold start, confirm the tappable "Open Match Emojis Daily" button actually appears and works, confirm the exchange completes; also test signing in from a different device than the one that requested it (a real PKCE-specific limitation the old implicit flow didn't have). Delete a real test account afterward and confirm the cascade actually removed everything.
+5. **Device-test the timer/animation race fix** — deliberately time a move to land at 0:00.
+6. When actually ready for a real Play Store build (not before): set `ADMOB_REWARDED_AD_UNIT_ID_PRODUCTION` and run the workflow with `use_production_ad_unit: true`.
+7. Decide Firebase: implement for real, or accept it's not part of this build (currently: removed, not decided either way long-term).
+8. Delete the now-unused `GOOGLE_SERVICES_JSON` secret once confirmed nothing else needs it.
+
+---
+
 **2026-09-19 (later still) — Phase 12 started: privacy policy, store listing, icon export, feature graphic; app icon source discrepancy found and confirmed**
 
 New session (`Go`), picking up from the prior session's note that Phase 12 or Phase 1's Play Console account were the two open, non-sequential options — proceeded to Phase 12 as the more immediately buildable of the two.

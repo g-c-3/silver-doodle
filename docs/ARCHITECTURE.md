@@ -1,21 +1,21 @@
 # Architecture
 
-Last updated: 2026-09-19 (later) — Phase 12 (Play Store prep) started: privacy policy, store listing copy, app icon export, and feature graphic drafted; app icon source confirmed switched to an externally-sourced image, no longer the originally-designed vector art (see Section 2 and DECISIONS.md).
+Last updated: 2026-09-20 — a two-round external security review worked through nearly end to end (score integrity, leaderboard scaling moved to SQL, client timer race, CDN/CSP hardening, emoji compatibility, auth flow switched to PKCE), a new account-deletion feature built, and several documentation-vs-reality gaps found and corrected along the way: the app icon's real source (externally-sourced, not the originally-designed vector art), Firebase never actually being shipped despite the stack table saying otherwise, and a deep-link handoff mechanism found regressed back to a design already known broken by real on-device testing. See Section 12 and DECISIONS.md's 2026-09-20 entry for the full detail.
 
 ## 1. Stack
 
 | Concern | Choice |
 |---|---|
 | Client | HTML/CSS/JavaScript match-3 game, wrapped as a native Android app via Capacitor |
-| Backend | Supabase — Postgres (data + leaderboards), Auth (email OTP), Edge Functions (TypeScript, score-replay validation) |
-| Analytics / crash reporting | Firebase — Analytics (linked to AdMob for revenue-by-cohort reporting) + Crashlytics only. No Firestore, no Firebase Auth — kept deliberately separate from the Supabase-owned auth/database/functions layer |
+| Backend | Supabase — Postgres (data + leaderboards), Auth (email magic link), Edge Functions (TypeScript, score-replay validation) |
+| Analytics / crash reporting | **Not currently implemented**, despite earlier versions of this table describing Firebase Analytics + Crashlytics as part of the stack. Corrected 2026-09-20: verified directly against the repo (no Firebase package anywhere, no `google-services.json` reference left after that date, no Gradle dependency ever declared) that Firebase was never actually wired in — a CI step wrote Firebase config but nothing consumed it, functionally inert (see DECISIONS.md's 2026-09-20 entry, and Section 13's Firebase project listing below). A Firebase project does exist (Section 13) but nothing in this app currently uses it. |
 | Ads | Google AdMob via `@capacitor-community/admob` — rewarded (primary trigger for ad-life and bonus-round entry), interstitial (capped), banner (optional) |
 | CI/CD | GitHub Actions — `build-apk.yml` (Capacitor + Gradle, produces an APK artifact/release), `deploy-functions.yml` (deploys Supabase Edge Functions on push to `server/functions/`) |
 | Distribution | Manual APK sideload via GitHub Releases during development; Google Play is a later phase |
 
 Capacitor was chosen over Unity or Godot specifically because scene/layout work in those engines is authored visually in a GUI editor, which cannot be previewed without running the editor. Plain HTML/CSS/JS can be authored and reasoned about correctly as text. The existing playable browser prototype's match/cascade/scoring logic is reused directly as the app core rather than rewritten.
 
-Supabase was chosen over Firebase primarily because the leaderboard ranking model (Section 8) is a multi-column `ORDER BY` in Postgres, versus hand-rolled denormalized aggregate fields in Firestore.
+Supabase was chosen over Firebase primarily because the leaderboard ranking model (Section 7) is a multi-column `ORDER BY` in Postgres, versus hand-rolled denormalized aggregate fields in Firestore. Worth noting: Phase 7's actual first implementation didn't follow this rationale (it sorted in JavaScript instead — see Section 7's history), and it took an external security review surfacing the resulting scaling failure before this got reconciled with the original design intent, 2026-09-19/20.
 
 ## 2. Repo Layout
 
@@ -31,6 +31,9 @@ client/
     js/attempt.js      attempt orchestration (forced-sequential slots, lives, bonus trigger, rendering)
     js/deep-link.js    completes magic-link sign-in inside the native app via a custom URL scheme
                         handoff — see Section 10
+    js/early-auth-handoff.js  the other half of that same handoff — see Section 10 and Section 11
+                        (moved out of an inline <script> 2026-09-19 for the CSP; rebuilt 2026-09-20
+                        after being found regressed to a previously-broken design — see DECISIONS.md)
   android/             Capacitor Android project — NOT committed; scaffolded fresh by build-apk.yml
                         on every CI run instead (see DECISIONS.md's 2026-09-16 "android/ generated
                         fresh in CI" entry — the short version: committing it would mean uploading
@@ -44,24 +47,35 @@ client/
                         the CI regeneration step is unaffected either way.
   capacitor.config.json
   package.json          pinned exact @capacitor/* versions — keeps the CI-generated android/
-                         project's shape stable run to run, which patch_build_gradle.py depends on
+                         project's shape stable run to run, which patch_build_gradle.py depends on.
+                         Also pins @supabase/supabase-js (2.116.0, 2026-09-19) — vendored locally at
+                         build time rather than loaded from a CDN, see Section 11.
 server/
   functions/           Supabase Edge Functions (score replay validation, daily game-definition generation, leaderboard settlement)
     admob-ssv/         Phase 10 — Google AdMob's server-side-verification callback target; see Section 5
+    delete-account/    Phase 12, 2026-09-20 — self-service account deletion; see Section 12
 supabase/
   migrations/           Postgres schema migrations (SQL Editor, run manually — Phase 2 onward)
-                         includes ad_verifications (Phase 10) — server-verified rewarded-ad completions
+                         includes ad_verifications (Phase 10) — server-verified rewarded-ad completions;
+                         and two Phase 12 (2026-09-19/20) migrations, not yet run against the live
+                         project — display-name privacy/integrity, and leaderboard ranking moved
+                         into SQL — see Section 7 and Section 12
   config.toml           per-function Edge Function config — currently just pins verify_jwt = false
                          for the two cron-only functions (Phase 11)
 .github/workflows/
   build-apk.yml
   deploy-functions.yml
   scripts/patch_build_gradle.py     injects release signingConfig + versionCode/versionName into the
-                                     CI-generated app/build.gradle (Phase 11)
+                                     CI-generated app/build.gradle (Phase 11); also, as of 2026-09-19,
+                                     raises minSdkVersion 24->29 (see Section 12's emoji-compatibility
+                                     note) — actually executed against the real extracted Capacitor
+                                     8.5.2 template before being shipped, not just written and assumed
   scripts/patch_android_manifest.py registers the matchemojisdaily://auth-callback deep link on the
                                      CI-generated AndroidManifest.xml (Phase 11) — see Section 10
 .gitignore
 privacy-policy.html     served via GitHub Pages, required before Google Play submission
+account-deletion.html  served via GitHub Pages, new 2026-09-20 — the web-request half of Google
+                        Play's account-deletion requirement; see Section 12
 ```
 
 ## 3. Game Mechanics Reference
@@ -241,9 +255,9 @@ Applied identically across all three scopes — daily, weekly (resets Monday 00:
 
 Each tier is only consulted if every player above it is exactly tied on all prior tiers. The per-player rank-breakdown UI shows which tier decided the player's placement.
 
-**Backend (2026-09-15, Phase 7):** implemented as the `leaderboard` Edge Function, which fetches the whole scope table (`daily_stats`/`weekly_stats`/`all_time_stats`, populated by `record_attempt_start`/`record_attempt_completion` — see Section 8) and sorts it in Deno rather than via a raw SQL `ORDER BY` chain — see that function's own header comment for why. Returns a ranked `top` list plus the caller's own `you` entry (present even when outside `top`) with `decidingTier`/`decidingTierName`.
+**Backend (2026-09-15, Phase 7; ranking rebuilt 2026-09-19/20 — external security review §5.9):** implemented as the `leaderboard` Edge Function. Originally fetched the whole scope table (`daily_stats`/`weekly_stats`/`all_time_stats`, populated by `record_attempt_start`/`record_attempt_completion` — see Section 8) and sorted it in Deno — this broke at real scale two independent ways: PostgREST's default 1,000-row cap silently truncated the fetch past that many players (wrong ranks, no error surfaced), and the per-row display-name lookup put every player's id into a single request URL, which fails outright past a few hundred players. Rebuilt so the 7-tier cascade above now runs once, in Postgres, via `get_leaderboard_page()` (`supabase/migrations/20260919020000_phase12_leaderboard_scaling_fix.sql`) using `RANK()` as a window function — this also fixed a smaller correctness bug the JS version had: genuinely-tied players used to get arbitrary sequential ranks instead of sharing one. The Edge Function now returns only the top N + the caller's own row (plus, if the caller is outside the top N, one extra row so `decidingTier` stays accurate) — never the whole table. Response JSON shape to the client is unchanged.
 
-**Client (2026-09-15, Phase 7):** `client/src/js/leaderboard.js` + a new `#screen-leaderboard` in `index.html`, reachable from Home. Three tabs (Daily/Weekly/All-time) call the Edge Function on tap; a "you" card shows the caller's own rank and, when not #1, which tier decided it (`decidingTierName` rendered directly, e.g. "Decided by: Average lives used (fewer is better)"). The caller's own row is also outlined in the ranked list when it's within the visible `top` N.
+**Client (2026-09-15, Phase 7):** `client/src/js/leaderboard.js` + a new `#screen-leaderboard` in `index.html`, reachable from Home. Three tabs (Daily/Weekly/All-time) call the Edge Function on tap; a "you" card shows the caller's own rank and, when not #1, which tier decided it (`decidingTierName` rendered directly, e.g. "Decided by: Average lives used (fewer is better)"). The caller's own row is also outlined in the ranked list when it's within the visible `top` N. Unaffected by the backend rebuild above — same response shape.
 
 ## 8. Attempt Accounting Rules
 
@@ -266,9 +280,9 @@ Per-player all-time stats (days played, total attempts, best day, least day) and
 
 Email + OTP only, via Supabase Auth — no phone verification. Implemented as a tap-the-link confirmation email rather than a typed 6-digit code (see DECISIONS.md Phase 3 "link-flow pivot" block for why) — the link itself is the one-time-use token. Only name and email are collected at signup; no other personal data. Name and email are editable later; an email change requires tapping a confirmation link sent to the new address. No minimum age gate (see DECISIONS.md for the associated open DPDP risk note).
 
-**Native-app handoff (Phase 11, 2026-09-17).** `signInWithOtp()` uses Supabase's PKCE flow by default, whose `code_verifier` is stored in whichever origin actually made the request. The emailed link always opens in the system browser — a different origin than the Capacitor app's own WebView — so when sign-in was started inside the app, the code exchange can only succeed if it's routed back into the app, not left in that browser tab (see DECISIONS.md for the full reasoning, including why Android App Links wasn't used instead). Two pieces:
-- `index.html`'s inline handoff (`#auth-handoff-overlay`, near the top of `<body>`): detects a bare-browser landing on the callback (`code=` or `access_token=` present) and shows a tappable "Open Match Emojis Daily" link to `matchemojisdaily://auth-callback...`. Deliberately a real tap, not an automatic redirect — browsers require a genuine user gesture to hand off to a custom URL scheme (see DECISIONS.md; an automatic-redirect version of this was tried first and got stuck on a blank page). `app.js`'s own routing is skipped entirely while this is showing (`window.__authHandoffPending` guard), so nothing else tries to draw underneath the fixed-position overlay.
-- `client/src/js/deep-link.js`: runs only inside the native app. Catches the handoff via `@capacitor/app`'s `appUrlOpen` (app already running) and `getLaunchUrl()` (cold start), and completes the exchange with the app's own Supabase client — the same origin the request started from, so the stored `code_verifier` actually matches.
+**Native-app handoff (Phase 11, 2026-09-17; both pieces below corrected 2026-09-20 — see DECISIONS.md's 2026-09-20 entry for the full reasoning on each).** `signInWithOtp()` uses PKCE — as of 2026-09-20, this is finally actually true rather than assumed: every comment describing this used to claim PKCE was Supabase's *default*, which was verified false by reading the real vendored `@supabase/auth-js@2.116.0` source directly (its own default is `flowType: 'implicit'`). `client/src/js/supabaseClient.js` now sets `flowType: 'pkce'` explicitly. **Not yet confirmed working on a real device.** Either way, PKCE's `code_verifier` is stored in whichever origin actually made the request, and the emailed link always opens in the system browser — a different origin than the Capacitor app's own WebView — so when sign-in was started inside the app, the code exchange can only succeed if it's routed back into the app, not left in that browser tab (see DECISIONS.md for the full reasoning, including why Android App Links wasn't used instead). Two pieces:
+- `client/src/js/early-auth-handoff.js` (loaded as the very first `<script>` in `index.html`'s `<head>`, before even the stylesheet — moved out of an inline `<script>` 2026-09-19 for the new CSP, see Section 11): detects a bare-browser landing on the callback (`code=` or `access_token=` present) and constructs a full-viewport overlay with a tappable "Open Match Emojis Daily" link to `matchemojisdaily://auth-callback...`, built via `document.createElement` and direct `.style.property` assignment rather than an inline `style=""` attribute (CSP-safe without an exception). Deliberately a real tap, not an automatic redirect — browsers require a genuine user gesture to hand off to a custom URL scheme; an automatic-redirect version of this was tried first back on 2026-09-17 and got stuck on a blank page in real on-device testing. **Found regressed back to the automatic-redirect version by accident on 2026-09-20**, while writing this same doc section — not from either security report — and rebuilt to match this confirmed-working design; how or when it regressed between 2026-09-17 and 2026-09-20 is unknown, no git history was available to check. `app.js`'s own routing is skipped entirely while this is showing (`window.__authHandoffPending` guard, set synchronously by this script before `app.js` runs later in `<body>`), so nothing else tries to draw underneath the overlay.
+- `client/src/js/deep-link.js`: runs only inside the native app. Catches the handoff via `@capacitor/app`'s `appUrlOpen` (app already running) and `getLaunchUrl()` (cold start), and completes the exchange with the app's own Supabase client — the same origin the request started from, so the stored `code_verifier` actually matches. Handles both a PKCE `code` and (kept deliberately, not deleted — an earlier draft of this session's PKCE fix tried removing this branch, testing caught that it breaks sign-in entirely since this branch was actually the only one ever exercised until today, and it was reverted) a token-bearing implicit-flow URL, in case of a stale cached link from before the PKCE fix or any other edge case that still produces tokens instead of a code.
 
 The custom scheme is registered on `MainActivity` by `.github/workflows/scripts/patch_android_manifest.py`, injected into the CI-generated `AndroidManifest.xml` the same way release signing is (Section 11) — `client/android/` isn't committed, so this can't live in a checked-in manifest file.
 
@@ -288,7 +302,23 @@ GitHub Actions handles all building; no local terminal build steps are ever requ
 
 ## 12. Play Store Prep (Phase 12)
 
-Started 2026-09-19 (later). `privacy-policy.html` (repo root, served via GitHub Pages per Section 2) was rewritten from the Phase 0 placeholder into a real policy covering Supabase-held account/gameplay data, Firebase Analytics + Crashlytics, and AdMob advertising data, with rights/retention/security/children's-privacy sections — two values (effective date, contact email) are left as explicit placeholders pending account-holder input rather than invented. `docs/STORE_LISTING.md` (new) holds the draft Play Console listing copy (title, descriptions, category/tags) plus a graphic-asset checklist. A 512×512 PNG app icon and a 1024×500 feature graphic were produced for the listing — see Section 2's `icon.svg` note and DECISIONS.md for why the icon source no longer matches its originally-designed look. Still outstanding: real device screenshots, the in-console content-rating questionnaire, production AdMob ad unit IDs (Section 13's table below still lists development/test IDs), and the Google Play Console developer account itself (Phase 1's other still-open item).
+Started 2026-09-19. `privacy-policy.html` (repo root, served via GitHub Pages per Section 2) was rewritten from the Phase 0 placeholder into a real policy covering Supabase-held account/gameplay data and AdMob advertising data, with rights/retention/security/children's-privacy sections. **Corrected 2026-09-20:** the policy originally also described Firebase Analytics + Crashlytics — removed once verified directly against the repo that Firebase was never actually shipped (see Section 1, Section 13, and DECISIONS.md's 2026-09-20 entry); the policy was over-claiming what's actually collected. Two values remain deliberately unfilled (effective date, contact email). `docs/STORE_LISTING.md` holds the draft Play Console listing copy. A 512×512 PNG app icon and a 1024×500 feature graphic were produced for the listing.
+
+**External security review, two rounds, worked through nearly end to end 2026-09-19/20 (`report.md`, `report-2.3.md`).** Every finding independently re-verified against the actual live code before being fixed, not taken on either document's word — several claims were confirmed directly against real running dependencies (e.g. the PKCE-default claim, checked against the actual vendored `@supabase/auth-js` source) or the real repo (the Firebase-absence claim, checked against the actual package list and a full repo search) rather than assumed. A separately-uploaded patch package was deliberately not applied — its own README described work already superseded by what's in this repo (see DECISIONS.md). Full technical detail of every individual fix lives in ROADMAP.md's Phase 12 section, not duplicated here. Summary of what changed and where it's documented elsewhere in this file:
+- Score integrity hardening (bonus-round validation, time-bonus forgery, atomic completion, forfeit window, ad-verification race) — `server/functions/score-replay/index.ts`, see Section 5.
+- Cron auth (`generate-daily-games`, `forfeit-stale-attempts` now require a shared `CRON_SECRET` header) — not yet actually enabled; needs the secret set and both Cron Trigger configs updated in the Dashboard.
+- Display-name privacy + a DB-level length constraint — new migration, not yet run against the live project.
+- Leaderboard ranking moved from JS into SQL for real scaling — see Section 7's updated history.
+- Client timer/animation race, traced twice (once for the original finding, once by hand against a report-2.3 addendum) — needs a real device playtest.
+- `supabase-js` vendored at a pinned version + a real CSP added — see Section 11.
+- 7 incompatible emoji glyphs swapped, `minSdk` raised 24->29 — a real, user-approved compatibility tradeoff (Android 7-9 devices can no longer install this app).
+- Auth flow switched from implicit to PKCE, and a second, independently-discovered handoff-mechanism regression fixed alongside it — see Section 10. **Neither confirmed on a real device yet.**
+- A dead Firebase CI step removed — see Section 1, Section 13.
+- Production AdMob unit ID gated behind an explicit `workflow_dispatch` flag instead of being live on every dev build — see Section 13's ad-unit row and its secrets list.
+
+**Account deletion, built 2026-09-20** (`server/functions/delete-account/index.ts`, `account-deletion.html`, plus `client/src/js/profile.js`/`client/src/index.html`/`client/src/js/app.js`). Google Play requires an in-app deletion path and a web page to request it, verified directly against Google's current policy wording before building anything. Self-deletion only, by construction — no `userId` parameter exists to bypass. Calls Supabase Auth's admin `deleteUser` on `auth.users`, which cascades through every table referencing `public.users` — every migration's `on delete cascade` chain was individually confirmed, not assumed from the source report's claim: `attempts`, `daily_stats`, `weekly_stats`, `all_time_stats`, `user_year_activity`, `player_daily_order`, `ad_verifications`. Real deletion, not deactivation. **Not yet tested against a real account** — the one function this session where a bug's failure mode is silent data loss rather than a rejected submission.
+
+**Still outstanding:** custom SMTP (the actual launch blocker — Supabase's built-in sender can't deliver to anyone outside the org, see Section 13), real device screenshots, the in-console content-rating questionnaire, running the two pending migrations, the `CRON_SECRET` Dashboard setup, device-testing the auth flow / account deletion / timer fix, and the Google Play Console developer account itself (Phase 1's other still-open item).
 
 ## 13. Provisioned Infrastructure
 
@@ -303,12 +333,14 @@ Non-secret identifiers only — actual credentials live in GitHub Actions secret
 | Supabase project ref | `wgkcxixocfzydawurluh` |
 | Supabase region | South Asia (Mumbai) |
 | AdMob App ID | `ca-app-pub-6922359485200410~4812181773` |
-| AdMob Rewarded ad unit ID | `ca-app-pub-6922359485200410/1441491988` |
+| AdMob Rewarded ad unit ID | `ca-app-pub-6922359485200410/1441491988` — **as of 2026-09-19, this is the value the `ADMOB_REWARDED_AD_UNIT_ID_PRODUCTION` secret should hold**, no longer hardcoded directly in `attempt.js` (see Section 1/Section 12 and `build-apk.yml`'s gated injection step) |
 | AdMob Interstitial ad unit ID | `ca-app-pub-6922359485200410/2621132707` |
 | AdMob Banner ad unit ID | `ca-app-pub-6922359485200410/6368806025` |
 | Android keystore alias | `match-emojis-daily` |
 | Android keystore validity | 30 years (until 2056) |
 
-GitHub Actions secrets on record (names only): `GOOGLE_SERVICES_JSON`, `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`.
+**The Firebase project above exists but is not used by this app** — confirmed 2026-09-20 (see Section 1, DECISIONS.md's 2026-09-20 entry): no Firebase dependency was ever declared anywhere in the codebase, so the project ID/number/bucket here are provisioned but functionally inert. Left listed rather than removed, since the project itself does still exist in the Firebase console regardless of whether this repo uses it.
 
-Deliberately not yet done: custom SMTP for Supabase Auth (dev-mode sender in use), Firebase Crashlytics SDK integration (deferred to Phase 4), production AdMob ad unit IDs (current IDs are development/test-appropriate, Phase 12 swaps to production), Google Play Console account.
+GitHub Actions secrets on record (names only): `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. **`GOOGLE_SERVICES_JSON` is on record but now unused** (2026-09-20, the dead Firebase CI step it fed was removed — see above) — safe to delete once confirmed nothing else needs it. **Two secrets are needed but not yet set:** `CRON_SECRET` (required for `generate-daily-games`/`forfeit-stale-attempts` to work at all as of the 2026-09-19/20 auth fix — without it, the daily cron 403s) and `ADMOB_REWARDED_AD_UNIT_ID_PRODUCTION` (only needed once an actual Play-bound release build is intended, see above).
+
+Deliberately not yet done: custom SMTP for Supabase Auth (dev-mode sender in use — see Section 12, this is the actual launch blocker), Google Play Console account. Firebase Crashlytics/Analytics SDK integration was never done despite earlier plans to — either implement it for real (real Gradle dependencies + a plugin/bridge, not just config-writing) or accept it's not part of this build is an open decision, not resolved either way as of this update.
