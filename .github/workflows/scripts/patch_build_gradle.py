@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
-"""Patches the Capacitor-generated client/android/app/build.gradle for
-release signing (reading client/android/keystore.properties, written by a
-prior CI step from GitHub Secrets -- never committed) and a per-build
-versionCode/versionName. The generated file is never committed to the repo
-(see docs/DECISIONS.md's "android/ generated fresh in CI" entry, 2026-09-17),
-so this patch is the only place these customizations live. Pinned exact
-Capacitor versions in client/package.json keep the generated text this
-patch matches on stable run to run; each check below is a deliberate
-tripwire -- if Capacitor's own template changes shape on a future version
-bump, this fails the build loudly here instead of silently shipping an
-unsigned or unversioned APK.
+"""Patches two Capacitor-generated files under client/android/ that need
+customization beyond Capacitor's own default template: app/build.gradle
+(release signing, reading client/android/keystore.properties written by a
+prior CI step from GitHub Secrets -- never committed -- plus a per-build
+versionCode/versionName) and variables.gradle (minSdkVersion, raised from
+Capacitor's default -- see the SECURITY/COMPATIBILITY FIX comment below).
+Neither generated file is ever committed to the repo (see docs/DECISIONS.md's
+"android/ generated fresh in CI" entry, 2026-09-17), so this patch is the
+only place these customizations live. Pinned exact Capacitor versions in
+client/package.json keep the generated text this patch matches on stable
+run to run; each check below is a deliberate tripwire -- if Capacitor's own
+template changes shape on a future version bump, this fails the build
+loudly here instead of silently shipping an unsigned, unversioned, or
+wrong-minSdk APK.
 
 Verified 2026-09-16 against the real output of:
   npx @capacitor/cli@8.5.2 add android
 (with @capacitor/core and @capacitor/android also pinned to 8.5.2).
+The variables.gradle default (minSdkVersion = 24) was re-verified
+2026-09-19 directly from @capacitor/cli@8.5.2's own bundled
+assets/android-template.tar.gz, not assumed to still match the 2026-09-16
+note above.
 """
 import os
 import pathlib
@@ -75,3 +82,34 @@ text = text.replace(old_release, new_release, 1)
 
 path.write_text(text)
 print("client/android/app/build.gradle patched for release signing.")
+
+# SECURITY/COMPATIBILITY FIX (2026-09-19, §5.13): following an external
+# code review (docs/DECISIONS.md's 2026-09-19 (later still) entry), 7 of
+# the 156 emoji glyphs used as game pieces (client/src/js/attempt.js's
+# THEMES array) were Emoji 13.0-15.0, unsupported on a real share of this
+# app's target devices -- rendering as blank, indistinguishable boxes,
+# which made valid matches look broken. Fixed two ways together: those 7
+# glyphs were swapped for Emoji <=12.0 equivalents (see attempt.js's own
+# comment on this), and minSdkVersion is raised here from Capacitor's
+# default of 24 (Android 7) to 29 (Android 10) -- the actual floor Emoji
+# 12.0 needs, verified against Unicode's own emoji-data.txt / Emojipedia,
+# not assumed. This is a real, deliberate compatibility tradeoff, not a
+# side effect: any device below Android 10 can no longer install this app
+# at all. Approved as the chosen option among three the review raised
+# (the other two -- bundling a font, or runtime glyph detection -- both
+# keep Capacitor's default minSdk 24 but cost real APK size or code
+# complexity instead).
+variables_path = pathlib.Path("client/android/variables.gradle")
+variables_text = variables_path.read_text()
+old_min_sdk = "minSdkVersion = 24"
+new_min_sdk = "minSdkVersion = 29"
+if old_min_sdk not in variables_text:
+    sys.exit(
+        "PATCH FAILED: 'minSdkVersion = 24' default not found in "
+        "variables.gradle -- Capacitor's template default changed (or was "
+        "already raised elsewhere), this script needs updating rather than "
+        "silently leaving minSdkVersion unpatched."
+    )
+variables_text = variables_text.replace(old_min_sdk, new_min_sdk, 1)
+variables_path.write_text(variables_text)
+print("client/android/variables.gradle patched: minSdkVersion 24 -> 29.")
