@@ -81,39 +81,18 @@ link — no password is ever set or stored by us). We collect:</p>
   the resulting summary (score, time bonus, etc. above) is kept.
 </p>
 
-<h3>1.3 Analytics and crash data</h3>
-<p>
-  We use <strong>Firebase Analytics</strong> and <strong>Firebase Crashlytics</strong>
-  (Google) to understand how the App is used and to diagnose crashes. This can include:
-</p>
-<ul>
-  <li>Device model, OS version, app version, language/locale, and general (city-level or
-      coarser) location inferred from IP address</li>
-  <li>In-app events (e.g. a level completed, a screen viewed) and session length</li>
-  <li>Crash logs and stack traces if the App crashes or encounters an error</li>
-  <li>A Firebase-generated installation identifier and, where applicable, the Android
-      advertising identifier</li>
-</ul>
-<p>
-  We do <strong>not</strong> use Firebase's database or authentication products — Firebase is
-  used only for analytics and crash reporting, and is kept separate from the account and
-  gameplay data described above, which is stored with Supabase (see Section 2).
-</p>
-
-<h3>1.4 Advertising data</h3>
+<h3>1.3 Advertising data</h3>
 <p>
   The App shows optional, player-initiated rewarded video ads (e.g. to earn an extra life or
   unlock a bonus round) and, in some builds, banner or interstitial ads, served through
   <strong>Google AdMob</strong>. AdMob and its ad-serving partners may collect the advertising
-  identifier, device information, and general location to select and measure ads, and to
-  verify that a rewarded ad was genuinely watched (server-side verification) before granting
-  its in-game reward. We do not control what AdMob's ad partners themselves do with this data
-  beyond what Google publishes in its own policies (linked in Section 5).
-</p>
-<p>
-  Firebase Analytics is linked to AdMob so that ad revenue can be reported alongside general
-  usage analytics (e.g. which player segments generate more ad views) — this is aggregate
-  reporting for the Developer, not information shared back to individual players.
+  identifier, device information, and general location to select and measure ads. To verify
+  that a rewarded ad was genuinely watched (server-side verification) before granting its
+  in-game reward, the App also sends AdMob a per-player identifier tied to your account
+  (specifically, an internal account ID, not your email address) alongside that
+  verification request — this lets Google's server confirm the completed ad back to us for
+  the correct player. We do not control what AdMob's ad partners themselves do with this
+  data beyond what Google publishes in its own policies (linked in Section 5).
 </p>
 
 <h2>2. Where Your Data Is Stored</h2>
@@ -122,16 +101,16 @@ link — no password is ever set or stored by us). We collect:</p>
   <tr><td>Account (email, display name), gameplay/attempt records, leaderboard stats</td>
       <td>Supabase (Postgres database, hosted in the South Asia / Mumbai region)</td>
       <td>Sign-in, gameplay, leaderboards, score integrity</td></tr>
-  <tr><td>Analytics events, crash reports</td>
-      <td>Firebase (Google)</td>
-      <td>Understanding usage, diagnosing bugs and crashes</td></tr>
-  <tr><td>Advertising identifiers, ad interaction data</td>
+  <tr><td>Advertising identifiers, per-player ad-verification ID, ad interaction data</td>
       <td>Google AdMob</td>
       <td>Serving and verifying rewarded/interstitial/banner ads</td></tr>
 </table>
 <p>
   Your email address is only ever stored in our Supabase database and Supabase's own
-  authentication system — it is never sent to Firebase, AdMob, or any other third party.
+  authentication system — it is never sent to AdMob or any other third party. The App does
+  not currently use Firebase, Google Analytics, or any other analytics or crash-reporting
+  service — the only third-party data flow beyond Supabase is the AdMob one described above.
+  If that changes in a future version, this policy will be updated first.
 </p>
 
 <h2>3. How We Use Your Information</h2>
@@ -166,7 +145,6 @@ marketing.</p>
 governing how it separately handles data on its platform:</p>
 <ul>
   <li>Supabase — <a href="https://supabase.com/privacy" target="_blank" rel="noopener">supabase.com/privacy</a></li>
-  <li>Google Firebase (Analytics &amp; Crashlytics) — <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">policies.google.com/privacy</a></li>
   <li>Google AdMob — <a href="https://policies.google.com/technologies/ads" target="_blank" rel="noopener">policies.google.com/technologies/ads</a></li>
 </ul>
 
@@ -186,7 +164,6 @@ governing how it separately handles data on its platform:</p>
       leaderboards, stats, and history remain accurate.</li>
   <li>Raw gameplay move data used for one-time score verification is not retained after
       verification.</li>
-  <li>Analytics and crash data is retained according to Firebase's default retention settings.</li>
   <li>If you request account deletion, we will remove your account and associated gameplay
       records, other than data we're required to keep for legal or security purposes.</li>
 </ul>
