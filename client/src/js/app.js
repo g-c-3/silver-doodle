@@ -554,4 +554,12 @@ if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.is
   }
 }
 
-showScreen('screen-loading');
+// FIXED 2026-09-20: guard restored alongside early-auth-handoff.js's
+// rebuild — see that file's own header comment. window.__authHandoffPending
+// is set synchronously by that script, which is guaranteed to have already
+// run by the time this file executes (it's the very first <script> in
+// index.html's <head>; this file loads near the end of <body>), so no race
+// is possible here.
+if (!window.__authHandoffPending) {
+  showScreen('screen-loading');
+}
