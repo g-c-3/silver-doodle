@@ -388,15 +388,18 @@ window.showAlert = showAlert;
  * g-c-3.github.io" popup). Resolves true/false, same calling shape as
  * window.confirm() so call sites read the same way.
  * @param {string} message
+ * @param {string} [icon] Defaults to the sign-out door emoji — existing
+ *   call sites are unaffected. Pass a different icon for a more severe
+ *   confirmation (e.g. account deletion).
  * @returns {Promise<boolean>}
  */
-function showConfirm(message) {
+function showConfirm(message, icon = '🚪') {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirm-modal');
     const okBtn = document.getElementById('confirm-modal-ok-btn');
     const cancelBtn = document.getElementById('confirm-modal-cancel-btn');
     document.getElementById('confirm-modal-message').textContent = message;
-    document.getElementById('confirm-modal-icon').textContent = '🚪';
+    document.getElementById('confirm-modal-icon').textContent = icon;
     modal.classList.remove('hidden');
 
     function cleanup(result) {
@@ -422,6 +425,34 @@ async function signOutToEmailScreen() {
 }
 
 document.getElementById('profile-sign-out-btn').addEventListener('click', signOutToEmailScreen);
+
+// ADDED 2026-09-19 (report-2.3, §5.10/§5.14): see delete-account/index.ts
+// and index.html's button markup. Deliberately a real, explicit confirm —
+// this is irreversible, unlike sign-out.
+document.getElementById('profile-delete-account-btn').addEventListener('click', async () => {
+  const confirmed = await showConfirm(
+    'Permanently delete your account? This cannot be undone — your scores, stats, and history will all be lost.',
+    '⚠️'
+  );
+  if (!confirmed) return;
+
+  const btn = document.getElementById('profile-delete-account-btn');
+  btn.disabled = true;
+  setError('profile-delete-account-error', '');
+
+  const { error } = await Profile.deleteAccount();
+  if (error) {
+    btn.disabled = false;
+    setError('profile-delete-account-error', error.message);
+    return;
+  }
+
+  // The account (and its server-side session) no longer exists — clear
+  // whatever's left client-side the same way an ordinary sign-out does,
+  // rather than assuming deleteUser() already invalidated local storage.
+  await signOutToEmailScreen();
+});
+
 document.getElementById('home-logout-btn').addEventListener('click', async () => {
   const confirmed = await showConfirm('Sign out?');
   if (confirmed) {
