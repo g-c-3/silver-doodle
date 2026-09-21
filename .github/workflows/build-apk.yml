@@ -64,8 +64,11 @@ on:
           COMPLIANCE (§5.14): only set true for a real, intentional release
           build heading to real players (e.g. a Play Store submission).
           Every normal rebuild -- including every sideload/dev/test build
-          produced so far -- should leave this false and keep using
-          Google's test ad unit (see client/src/js/attempt.js).
+          produced so far -- should leave this false and keep using this
+          project's dedicated dev/test Rewarded ad unit, which has its own
+          SSV config so ad-life/bonus testing actually works end-to-end
+          without touching production ad traffic (see
+          client/src/js/attempt.js).
         type: boolean
         default: false
 
@@ -157,12 +160,25 @@ jobs:
         # explicitly and intentionally marked as heading to real players
         # (see the workflow_dispatch input above) -- every other build,
         # including every sideload/test build produced up to now, keeps
-        # using Google's test ad unit hardcoded in attempt.js and this step
+        # using the dev/test ad unit hardcoded in attempt.js and this step
         # is skipped entirely. ADMOB_REWARDED_AD_UNIT_ID_PRODUCTION should
         # hold this project's real registered unit
         # (ca-app-pub-6922359485200410/1441491988 -- the value this
         # constant used to be hardcoded to, before this fix) as a GitHub
         # secret, not committed anywhere.
+        #
+        # BUG FIX (2026-09-22, device report): TEST_ID below was Google's
+        # shared public test ad unit ID until this fix. That unit isn't
+        # registered under this project's AdMob account at all, so it has
+        # no page to configure SSV on -- admob-ssv could never be invoked
+        # while a build used it, meaning ad-life/bonus attempts always
+        # failed server-side validation on every dev/sideload build.
+        # TEST_ID is now this project's own dedicated dev/test Rewarded
+        # unit (ca-app-pub-6922359485200410/4016179270), created
+        # specifically for this, with its own SSV callback pointed at the
+        # same admob-ssv endpoint as production -- so dev builds get a
+        # real, verifiable reward path without ever touching the
+        # production unit's traffic or revenue.
         if: ${{ github.event.inputs.use_production_ad_unit == 'true' }}
         working-directory: client
         run: |
@@ -170,9 +186,9 @@ jobs:
             echo "PATCH FAILED: use_production_ad_unit was true but the ADMOB_REWARDED_AD_UNIT_ID_PRODUCTION secret is not set -- refusing to build a release with no real ad unit configured."
             exit 1
           fi
-          TEST_ID="ca-app-pub-3940256099942544/5224354917"
+          TEST_ID="ca-app-pub-6922359485200410/4016179270"
           if ! grep -q "$TEST_ID" src/js/attempt.js; then
-            echo "PATCH FAILED: the expected test ad unit ID was not found in attempt.js -- it may have already been patched, or the source changed shape. Not overwriting blindly."
+            echo "PATCH FAILED: the expected dev/test ad unit ID was not found in attempt.js -- it may have already been patched, or the source changed shape. Not overwriting blindly."
             exit 1
           fi
           sed -i "s#$TEST_ID#${{ secrets.ADMOB_REWARDED_AD_UNIT_ID_PRODUCTION }}#" src/js/attempt.js
