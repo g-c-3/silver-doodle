@@ -215,6 +215,10 @@ document.getElementById('name-setup-skip-btn').addEventListener('click', () => {
 
 // ---- Home ----
 
+// This id now belongs to the top-right corner icon button (moved there from
+// a text button in the home list, and from what used to be the sign-out
+// icon here — sign-out now lives only inside the profile screen itself,
+// see profile-sign-out-btn below).
 document.getElementById('home-profile-btn').addEventListener('click', () => {
   renderProfileScreen();
   showScreen('screen-profile');
@@ -416,6 +420,56 @@ function showConfirm(message, icon = '🚪') {
   });
 }
 
+/**
+ * Type-to-confirm dialog, for account deletion only — the single most
+ * destructive action in the app. showConfirm()'s plain OK/Cancel is enough
+ * friction for sign-out (reversible — just log back in); this requires
+ * actually typing the word "delete" before the button is even clickable,
+ * on top of the existing warning message, matching how most services gate
+ * irreversible account deletion.
+ * @returns {Promise<boolean>}
+ */
+function showDeleteConfirm() {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('delete-confirm-modal');
+    const input = document.getElementById('delete-confirm-input');
+    const okBtn = document.getElementById('delete-confirm-ok-btn');
+    const cancelBtn = document.getElementById('delete-confirm-cancel-btn');
+
+    input.value = '';
+    okBtn.disabled = true;
+    modal.classList.remove('hidden');
+    input.focus();
+
+    function matches() {
+      return input.value.trim().toLowerCase() === 'delete';
+    }
+    function onInput() {
+      okBtn.disabled = !matches();
+    }
+    function cleanup(result) {
+      modal.classList.add('hidden');
+      input.removeEventListener('input', onInput);
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    }
+    // Guards against onOk firing via a stray Enter-key submit or a race
+    // with onInput — okBtn.disabled already blocks a real click, but this
+    // keeps the resolve(true) path itself honest regardless of how it's
+    // triggered.
+    function onOk() {
+      if (!matches()) return;
+      cleanup(true);
+    }
+    function onCancel() { cleanup(false); }
+
+    input.addEventListener('input', onInput);
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
 async function signOutToEmailScreen() {
   await Auth.signOut();
   state.session = null;
@@ -424,16 +478,25 @@ async function signOutToEmailScreen() {
   showScreen('screen-email');
 }
 
-document.getElementById('profile-sign-out-btn').addEventListener('click', signOutToEmailScreen);
+// Sign-out now lives only here (the corner icon button was repurposed to
+// open the profile screen instead — see the home-profile-btn wiring
+// above), so this is the app's one sign-out entry point and needed the
+// confirmation the corner button used to have.
+document.getElementById('profile-sign-out-btn').addEventListener('click', async () => {
+  const confirmed = await showConfirm('Sign out?');
+  if (confirmed) {
+    signOutToEmailScreen();
+  }
+});
 
 // ADDED 2026-09-19 (report-2.3, §5.10/§5.14): see delete-account/index.ts
 // and index.html's button markup. Deliberately a real, explicit confirm —
-// this is irreversible, unlike sign-out.
+// this is irreversible, unlike sign-out. UPDATED 2026-09-21: a plain
+// OK/Cancel wasn't enough friction for something this irreversible —
+// switched to showDeleteConfirm(), which requires typing "delete" before
+// the button is even clickable.
 document.getElementById('profile-delete-account-btn').addEventListener('click', async () => {
-  const confirmed = await showConfirm(
-    'Permanently delete your account? This cannot be undone — your scores, stats, and history will all be lost.',
-    '⚠️'
-  );
+  const confirmed = await showDeleteConfirm();
   if (!confirmed) return;
 
   const btn = document.getElementById('profile-delete-account-btn');
@@ -451,13 +514,6 @@ document.getElementById('profile-delete-account-btn').addEventListener('click', 
   // whatever's left client-side the same way an ordinary sign-out does,
   // rather than assuming deleteUser() already invalidated local storage.
   await signOutToEmailScreen();
-});
-
-document.getElementById('home-logout-btn').addEventListener('click', async () => {
-  const confirmed = await showConfirm('Sign out?');
-  if (confirmed) {
-    signOutToEmailScreen();
-  }
 });
 
 // ---- Email change ----
