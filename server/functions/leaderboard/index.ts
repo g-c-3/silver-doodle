@@ -49,12 +49,16 @@ const CORS_HEADERS = {
 
 type Scope = 'daily' | 'weekly' | 'all-time';
 
-// One row of get_leaderboard_page()'s result — column names are prefixed
-// (out_*, rnk) in the SQL function to dodge PL/pgSQL's "ambiguous column
-// reference" error against the source tables' own column names.
+// One row of get_leaderboard_page()'s result — every column is prefixed
+// out_* to dodge PL/pgSQL's "ambiguous column reference" error against the
+// source tables' own column names AND against the function's own OUT
+// parameters (RETURNS TABLE implicitly declares a PL/pgSQL variable per
+// column, so an unprefixed working name anywhere in the function body can
+// collide with its own output column — this bit the original migration
+// once already: 2026-09-21, see docs/DECISIONS.md).
 interface RankedRow {
   out_user_id: string;
-  rnk: number;
+  out_rnk: number;
   out_max_score: number;
   out_sum_score: number;
   out_max_time_bonus_micros: number;
@@ -135,7 +139,7 @@ function fail(error: string) {
 
 function buildEntry(row: RankedRow, displayName: string) {
   return {
-    rank: row.rnk,
+    rank: row.out_rnk,
     userId: row.out_user_id,
     displayName,
     score: row.out_max_score,
@@ -244,22 +248,22 @@ Deno.serve(async (req: Request) => {
   const nameById = new Map<string, string>(namesResult.data.map((n) => [n.id, n.display_name]));
 
   // The RPC can return one extra row (the caller's decidingTier reference
-  // row, rnk = callerRank - 1) when the caller is outside the top `limit`
-  // — exclude it from the public top list, it was only fetched for the
-  // comparison below.
+  // row, out_rnk = callerRank - 1) when the caller is outside the top
+  // `limit` — exclude it from the public top list, it was only fetched for
+  // the comparison below.
   const top = rankedRows
-    .filter((r) => r.rnk <= limit)
+    .filter((r) => r.out_rnk <= limit)
     .map((r) => buildEntry(r, nameById.get(r.out_user_id) ?? 'Unknown'));
 
   const callerRow = rankedRows.find((r) => r.is_caller);
   let you: ReturnType<typeof buildEntry> & { inTop: boolean; decidingTier: number | null; decidingTierName: string | null } | null = null;
   if (callerRow) {
     const entry = buildEntry(callerRow, nameById.get(user.id) ?? 'You');
-    const aboveRow = rankedRows.find((r) => r.rnk === callerRow.rnk - 1);
-    const decidingTier = callerRow.rnk === 1 ? null : aboveRow ? decidingTierIndex(callerRow, aboveRow) : null;
+    const aboveRow = rankedRows.find((r) => r.out_rnk === callerRow.out_rnk - 1);
+    const decidingTier = callerRow.out_rnk === 1 ? null : aboveRow ? decidingTierIndex(callerRow, aboveRow) : null;
     you = {
       ...entry,
-      inTop: callerRow.rnk <= limit,
+      inTop: callerRow.out_rnk <= limit,
       decidingTier,
       decidingTierName: decidingTier !== null ? TIER_NAMES[decidingTier - 1] : null,
     };
