@@ -21,6 +21,16 @@
 // inline <script> into this external file in the first place — see
 // index.html's CSP <meta> tag comment for that reasoning.
 //
+// BEAUTIFIED 2026-09-21: previously a flat #0159C5 (the app *icon's* blue)
+// with no visual relationship to the app's actual in-app theme (dark
+// #14121f background, pink/purple gradient accents — see
+// client/src/css/styles.css's :root variables). This page runs before that
+// stylesheet is even requested (deliberately the very first <script> in
+// <head>, see below), so it can't reference those CSS variables directly —
+// their hex values are simply copied in here instead, kept in a comment
+// next to each use so they're easy to keep in sync if the palette in
+// styles.css ever changes.
+//
 // See client/src/js/deep-link.js for the full reasoning this handoff
 // exists at all (short version: signInWithOtp() uses PKCE, whose
 // code_verifier lives in whichever origin started the sign-in, and the
@@ -58,31 +68,95 @@ window.__authHandoffPending = false;
   overlay.style.flexDirection = 'column';
   overlay.style.alignItems = 'center';
   overlay.style.justifyContent = 'center';
-  overlay.style.gap = '20px';
-  overlay.style.padding = '24px';
+  overlay.style.gap = '18px';
+  // env(safe-area-inset-*) is a plain CSS value, so it works fine through
+  // direct .style assignment same as any other value — no <style> block or
+  // CSP allowance needed for it. This page can land inside a system
+  // browser's own chrome (see the Opera screenshot this rebuild was
+  // checked against) rather than the app's edge-to-edge WebView, so it
+  // matters less here than elsewhere in the app, but costs nothing to
+  // handle correctly.
+  overlay.style.padding = '24px calc(24px + env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)) calc(24px + env(safe-area-inset-left, 0px))';
+  overlay.style.paddingTop = 'max(24px, env(safe-area-inset-top, 0px))';
   overlay.style.textAlign = 'center';
-  overlay.style.background = '#0159C5'; // matches the app icon's blue (Section 2/Phase 12 icon note)
-  overlay.style.color = '#ffffff';
+  overlay.style.background = 'radial-gradient(circle at 50% 30%, #241f3d 0%, #14121f 70%)'; // --bg: #14121f, lightened toward center for depth
+  overlay.style.color = '#f2f0fa'; // --text
   overlay.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 
+  // Soft glow behind the logo — a blurred circle, not a pseudo-element
+  // (pseudo-elements need a <style> block, which this file deliberately
+  // avoids — see the file header). Purely decorative, positioned behind
+  // the logo via z-index rather than DOM order since flex would otherwise
+  // stack it visibly above/below instead of behind.
+  var glow = document.createElement('div');
+  glow.style.position = 'absolute';
+  glow.style.top = '50%';
+  glow.style.left = '50%';
+  glow.style.transform = 'translate(-50%, -50%)';
+  glow.style.width = '180px';
+  glow.style.height = '180px';
+  glow.style.borderRadius = '50%';
+  glow.style.background = 'linear-gradient(135deg, #ff6f91, #7c6fff)'; // --accent, --accent-2
+  glow.style.filter = 'blur(60px)';
+  glow.style.opacity = '0.35';
+  glow.style.zIndex = '0';
+
+  var logo = document.createElement('div');
+  logo.textContent = '🧩';
+  logo.style.fontSize = '56px';
+  logo.style.lineHeight = '1';
+  logo.style.position = 'relative';
+  logo.style.zIndex = '1';
+  logo.style.filter = 'drop-shadow(0 4px 16px rgba(0, 0, 0, 0.4))';
+
+  var heading = document.createElement('h1');
+  heading.textContent = "You're signed in";
+  heading.style.fontSize = '22px';
+  heading.style.fontWeight = '700';
+  heading.style.margin = '0';
+  heading.style.position = 'relative';
+  heading.style.zIndex = '1';
+
   var message = document.createElement('p');
-  message.textContent = "You're signed in — tap below to return to Match Emojis Daily.";
-  message.style.fontSize = '17px';
+  message.textContent = 'Tap below to return to Match Emojis Daily.';
+  message.style.fontSize = '16px';
+  message.style.color = '#a39fb8'; // --muted
   message.style.maxWidth = '320px';
   message.style.margin = '0';
+  message.style.position = 'relative';
+  message.style.zIndex = '1';
 
   var link = document.createElement('a');
   link.href = targetUrl;
   link.textContent = 'Open Match Emojis Daily';
   link.style.display = 'inline-block';
-  link.style.padding = '14px 28px';
+  link.style.marginTop = '8px';
+  link.style.padding = '16px 32px';
   link.style.borderRadius = '999px';
-  link.style.background = '#ffffff';
-  link.style.color = '#0159C5';
+  link.style.background = 'linear-gradient(135deg, #ff6f91, #7c6fff)'; // matches button.primary in styles.css
+  link.style.color = '#ffffff';
   link.style.fontWeight = '700';
   link.style.fontSize = '16px';
   link.style.textDecoration = 'none';
+  link.style.boxShadow = '0 8px 24px rgba(124, 111, 255, 0.35)';
+  link.style.position = 'relative';
+  link.style.zIndex = '1';
+  link.style.transition = 'transform 0.1s ease';
+  // Simple press feedback — pointer events cover both touch and mouse in
+  // one listener pair, no separate touchstart/mousedown handling needed.
+  link.addEventListener('pointerdown', function () {
+    link.style.transform = 'scale(0.96)';
+  });
+  link.addEventListener('pointerup', function () {
+    link.style.transform = 'scale(1)';
+  });
+  link.addEventListener('pointercancel', function () {
+    link.style.transform = 'scale(1)';
+  });
 
+  overlay.appendChild(glow);
+  overlay.appendChild(logo);
+  overlay.appendChild(heading);
   overlay.appendChild(message);
   overlay.appendChild(link);
   // document.documentElement (<html>) already exists at this point even
