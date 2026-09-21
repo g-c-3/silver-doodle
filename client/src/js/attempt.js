@@ -132,17 +132,27 @@ const Attempt = (() => {
   // still a later phase) was generating real impressions/clicks against a
   // live AdMob unit outside AdMob's own traffic-quality expectations for
   // dev testing, which risks the account being flagged for invalid
-  // traffic. Default is now Google's own official sample rewarded-video
-  // test unit ID (verified against Google's AdMob developer docs directly,
-  // not assumed) — always returns a test creative, never counts as real
-  // traffic, safe to click on repeatedly during testing. The real
-  // production unit ID is injected over this placeholder only by an
-  // explicit, opt-in CI step (see .github/workflows/build-apk.yml's
-  // "Inject production AdMob unit ID" step) gated behind a
-  // workflow_dispatch input that defaults to false — every normal
-  // push-triggered build, which is still all of them today, keeps using
-  // this test ID automatically with no action needed.
-  const ADMOB_REWARDED_AD_UNIT_ID = 'ca-app-pub-3940256099942544/5224354917';
+  // traffic. Default was briefly Google's own official sample
+  // rewarded-video test unit ID, but that unit isn't a real ad unit under
+  // this project's AdMob account — there's no AdMob console page for it,
+  // so a custom SSV callback URL can never be configured on it. Every
+  // ad-life/bonus attempt on a build using it would correctly play a test
+  // ad client-side, then permanently fail server-side validation, since
+  // admob-ssv would never be invoked at all (confirmed live, 2026-09-21 —
+  // zero admob-ssv invocations across a full attempt, ruling out a
+  // key-rotation or server bug). Fixed 2026-09-22: default is now a
+  // second, dedicated Rewarded ad unit created under this project's own
+  // AdMob account specifically for this — real enough to carry its own
+  // SSV config (pointed at the same admob-ssv endpoint as production),
+  // but entirely separate from the live "Rewarded - Ad Life / Bonus" unit,
+  // so dev/sideload testing never touches production ad traffic or
+  // revenue. The real production unit ID is injected over this
+  // placeholder only by an explicit, opt-in CI step (see
+  // .github/workflows/build-apk.yml's "Inject production AdMob unit ID"
+  // step) gated behind a workflow_dispatch input that defaults to false —
+  // every normal push-triggered build, which is still all of them today,
+  // keeps using this dev/test ID automatically with no action needed.
+  const ADMOB_REWARDED_AD_UNIT_ID = 'ca-app-pub-6922359485200410/4016179270';
 
   let a = null; // current attempt state
   let selectedCell = null; // [r,c] or null — used by the tap-tap flow only
@@ -847,8 +857,26 @@ const Attempt = (() => {
 
   // Manual retry, wired to summary-retry-btn (app.js). Just re-runs
   // submitAttempt() — the guard/backoff logic above is all shared.
+  //
+  // BUG FIX (2026-09-21, device report): a tap here could take a few
+  // seconds to resolve (score-replay's own server-side ad-verification
+  // backoff is 3s on top of the network round trip), and the button gave
+  // no feedback during that window at all — same size, same "Retry saving
+  // score" text, fully clickable. A second tap during that window was
+  // silently swallowed by the `a.submitting` guard in submitAttempt(),
+  // with nothing on screen explaining why. Reported as "the Retry button
+  // is disabled" — not literally true in the code, but indistinguishable
+  // from it to the player. Now gives immediate, honest feedback: disabled
+  // + "Retrying…" the instant it's tapped, restored to normal by
+  // renderSummary() once a real result (success or a fresh failure)
+  // comes back.
   function retrySubmitAttempt() {
     if (!a || a.submitting) return;
+    const retryBtn = el('summary-retry-btn');
+    if (retryBtn) {
+      retryBtn.disabled = true;
+      retryBtn.textContent = 'Retrying…';
+    }
     submitAttempt();
   }
 
@@ -1332,7 +1360,21 @@ const Attempt = (() => {
       // that case would only ever hit the same 409 again), or when the
       // rejection is definitive — a forged/invalid payload fails the same
       // way every time, so a Retry button can't offer anything real.
-      if (retryBtn) retryBtn.classList.toggle('hidden', !!r.retrying || !!r.alreadySaved || !!r.noRetry);
+      if (retryBtn) {
+        // BUG FIX (2026-09-21, device report): retrySubmitAttempt() puts the
+        // button into a disabled "Retrying…" state (see below) for the
+        // duration of the request, but nothing ever reset it back — so once
+        // a manual retry resolved back into this same "still failing"
+        // result, the button looked and behaved exactly like the previous
+        // in-flight state (disabled, "Retrying…"), i.e. permanently stuck
+        // looking disabled even though a fresh tap would have worked fine.
+        // Every render of a definitive/showable result now explicitly
+        // restores the button's clickable resting state first, regardless
+        // of whether this render is about to hide it again.
+        retryBtn.disabled = false;
+        retryBtn.textContent = 'Retry saving score';
+        retryBtn.classList.toggle('hidden', !!r.retrying || !!r.alreadySaved || !!r.noRetry);
+      }
       return;
     }
     // Server-authoritative figures — this is what actually counts once
