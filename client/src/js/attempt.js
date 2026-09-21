@@ -1154,11 +1154,27 @@ const Attempt = (() => {
     attemptSwapAt(r1, c1, r, c);
   }
 
-  // Runs the swap through the engine, then plays swap → blast → settle as a
-  // short animated sequence before checking level completion. Only the
-  // swap's own immediate match is blasted at exact positions (see
-  // GameEngine.trySwapDetailed's comment) — any further cascade rounds
-  // resolve directly to the final board after the same pause.
+  // Timing for cascade rounds beyond the first (see playCascadeRounds()).
+  // Deliberately much cheaper than the first round's 90ms blast / 420ms
+  // settle beat — the countdown timer is real wall-clock time and does NOT
+  // pause during this animation (see startTimer()/tick()), and the
+  // server's own MIN_MS_PER_MOVE floor already assumes each move costs
+  // roughly the first round's 420ms; giving every extra chain-reaction
+  // round that same full weight would eat real time out of the level's
+  // budget on every cascade, on top of what level difficulty was already
+  // tuned around. This is a fast highlight-then-settle instead: enough to
+  // see that another round happened and why the score moved, not a full
+  // repeat of the swap's own animation. Chosen directly over the
+  // alternatives (full-weight animation, or full-weight with the timer
+  // paused to make it free) — see docs/DECISIONS.md's 2026-09-22 entry.
+  const EXTRA_CASCADE_BLAST_MS = 30;
+  const EXTRA_CASCADE_SETTLE_MS = 150;
+
+  // Runs the swap through the engine, then plays swap → blast → settle for
+  // the swap's own immediate match (unchanged timing from before), followed
+  // by a fast highlight-then-settle beat for each further cascade round the
+  // swap triggered (see playCascadeRounds()), before checking level
+  // completion.
   function attemptSwapAt(r1, c1, r2, c2) {
     const result = GameEngine.trySwapDetailed(a.board, r1, c1, r2, c2, a.rng);
 
@@ -1182,19 +1198,41 @@ const Attempt = (() => {
     if (!a.isBonusLevel) a.movesMade++;
     a.currentLevelMoves.push([r1, c1, r2, c2]);
 
+    playCascadeRounds(result.rounds, 0);
+  }
+
+  // Plays one cascade round's blast-then-settle beat, commits that round's
+  // own score+HUD update in sync with it becoming visible, then recurses
+  // into the next round if the chain reaction continues. Round 0 (the
+  // swap's own direct match) uses the original 90ms/420ms timing; any
+  // further round uses the cheaper EXTRA_CASCADE_* timing above. Once the
+  // last round settles, runs the same level-completion checks that used to
+  // live directly in attemptSwapAt's single setTimeout.
+  function playCascadeRounds(rounds, idx) {
+    const round = rounds[idx];
+    const isFirst = idx === 0;
+    const blastMs = isFirst ? 90 : EXTRA_CASCADE_BLAST_MS;
+    const settleMs = isFirst ? 420 : EXTRA_CASCADE_SETTLE_MS;
+
     setTimeout(() => {
-      result.firstRoundCleared.forEach((key) => {
+      round.clearedCells.forEach((key) => {
         const [r, c] = key.split(',').map(Number);
         const node = cellEl(r, c);
         if (node) node.classList.add('blasting');
       });
-    }, 90);
+    }, blastMs);
 
     setTimeout(() => {
-      a.board = result.finalBoard;
-      a.levelScore += result.totalScore;
+      a.board = round.board;
+      a.levelScore += round.score;
       renderBoard();
       renderHud();
+
+      if (idx + 1 < rounds.length) {
+        playCascadeRounds(rounds, idx + 1);
+        return;
+      }
+
       a.locked = false;
       a.animating = false;
       clearHints();
@@ -1203,16 +1241,16 @@ const Attempt = (() => {
       // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): a move that lands
       // right at expiry is judged on its own result FIRST — if it actually
       // completed the level, that's what happened, full stop, regardless
-      // of whether the clock also hit zero during its 420ms resolution.
-      // Only if it did NOT complete the level does a deferred timeout (or
-      // one that expires exactly now) actually get acted on.
+      // of whether the clock also hit zero during its resolution. Only if
+      // it did NOT complete the level does a deferred timeout (or one that
+      // expires exactly now) actually get acted on.
       if (!a.isBonusLevel && a.movesMade >= a.levelMovesTarget) {
         finishRegularLevel();
       } else if (a.pendingTimeout || msRemaining() <= 0) {
         a.pendingTimeout = false;
         handleTimeout();
       }
-    }, 420);
+    }, settleMs);
   }
 
   // ---- Rendering ----

@@ -194,12 +194,19 @@ const GameEngine = (() => {
     }
   }
 
-  // Resolves all cascades from the current board state (assumed to already
-  // contain at least one match). Returns total score across every cascade
-  // round and the final settled board.
-  function resolveCascades(board, rng) {
+  // Like resolveCascades below, but returns each individual cascade round's
+  // own cleared-cell set, score, and the resulting board (after that
+  // round's clear + gravity/refill) instead of only the grand total. Added
+  // 2026-09-22 so the UI can show a chain reaction round by round instead
+  // of jumping straight to the fully-resolved board with one unexplained
+  // lump-sum score jump — see docs/DECISIONS.md's 2026-09-13 entry for why
+  // this wasn't originally built, and this same date's entry for why and
+  // how it now is (device report: a single 3-tile swap paying out 117 —
+  // three chained 39-point rounds — with only the first one ever visible).
+  function resolveCascadesDetailed(board, rng) {
+    const rounds = [];
     let totalScore = 0;
-    let rounds = 0;
+    let iterations = 0;
     for (;;) {
       const runs = findRuns(board);
       if (runs.length === 0) break;
@@ -210,10 +217,20 @@ const GameEngine = (() => {
         board[r][c] = null;
       });
       applyGravityAndRefill(board, rng);
-      rounds++;
-      if (rounds > 40) break; // safety guard against a logic error looping forever
+      rounds.push({ clearedCells, score, board: cloneBoard(board) });
+      iterations++;
+      if (iterations > 40) break; // safety guard against a logic error looping forever
     }
-    return totalScore;
+    return { totalScore, rounds };
+  }
+
+  // Resolves all cascades from the current board state (assumed to already
+  // contain at least one match). Returns total score across every cascade
+  // round; board is mutated in place to the final settled state. A thin
+  // wrapper over resolveCascadesDetailed — trySwap only ever needs the
+  // total, not the per-round breakdown.
+  function resolveCascades(board, rng) {
+    return resolveCascadesDetailed(board, rng).totalScore;
   }
 
   function isAdjacent(r1, c1, r2, c2) {
@@ -305,11 +322,17 @@ const GameEngine = (() => {
 
   // Like trySwap, but also exposes the intermediate state so the UI can
   // animate the swap's own immediate match precisely (correct cell
-  // positions, correct piece colors) before jumping to the fully-resolved
-  // board. Cascade rounds after the first are not individually exposed —
-  // animating those exactly would require re-deriving cell identity across
-  // gravity shifts, which isn't worth the complexity for a match-3 board
-  // this size. See docs/DECISIONS.md for this scoping call.
+  // positions, correct piece colors) before settling into the fully-
+  // resolved board. `rounds` (added 2026-09-22, see resolveCascadesDetailed
+  // above and docs/DECISIONS.md's 2026-09-13 and 2026-09-22 entries) carries
+  // one entry per cascade round this swap triggered, in order — rounds[0]
+  // is always the swap's own direct match (its clearedCells are positions
+  // in swappedBoard, matching the original firstRoundCleared/firstRoundScore
+  // fields this replaces); rounds[1+] are chain reactions from gravity
+  // refill, each one's clearedCells positioned in the PREVIOUS round's
+  // board. Every round's `board` is the fully-settled state after that
+  // round's own clear + gravity/refill — rounds[rounds.length - 1].board
+  // is exactly finalBoard.
   function trySwapDetailed(board, r1, c1, r2, c2, rng) {
     if (!isAdjacent(r1, c1, r2, c2)) return { valid: false };
     const swappedBoard = cloneBoard(board);
@@ -320,16 +343,13 @@ const GameEngine = (() => {
     const firstRoundRuns = findRuns(swappedBoard);
     if (firstRoundRuns.length === 0) return { valid: false };
 
-    const { score: firstRoundScore, clearedCells: firstRoundCleared } = scoreRuns(firstRoundRuns);
-
     const finalBoard = cloneBoard(swappedBoard);
-    const totalScore = resolveCascades(finalBoard, rng);
+    const { totalScore, rounds } = resolveCascadesDetailed(finalBoard, rng);
 
     return {
       valid: true,
       swappedBoard,
-      firstRoundCleared, // Set of "r,c" keys, positions in swappedBoard
-      firstRoundScore,
+      rounds,
       finalBoard,
       totalScore,
     };
