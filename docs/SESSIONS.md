@@ -4,6 +4,20 @@ Most recent entry first.
 
 ---
 
+**2026-09-22 (hearts) — Lives display rebuilt as animated draining hearts**
+
+Same session, continued. Requested feature: instead of the existing static text-based lives display (full/empty heart emoji, counted from `a.livesUsedInRun`), each life's heart should visually drain red-to-white from the top down over the course of its own 60-second segment, and the ad-life indicator (previously a static 🎬 appended once used) should become a 4th heart doing the same, for the ad's own segment.
+
+Mapped this onto the actual segment sequence (`STARTING_LIVES = 3`, `LEVEL_SECONDS`/`LIFE_EXTENSION_SECONDS = 60` each): heart 0 drains during the level's initial 60s, heart 1 during the 60s the 1st life's use grants, heart 2 during the 60s the 2nd life's use grants, and a 4th "ad heart" (hidden until `adLifeUsedThisLevel` becomes true) during the 60s an ad-life grants. The segment the 3rd (final) life's use grants — after all 3 hearts are already fully drained, before an ad is even offered — has no dedicated heart of its own in this design; it relies on the plain timer chip alone, same as it always has. Flagged this gap explicitly rather than silently inventing a 4th life-heart that doesn't correspond to anything STARTING_LIVES actually grants.
+
+**Built:** `client/src/index.html` gained 4 heart `<svg>`s in the Lives HUD chip (replacing the old plain-text span), each a single `<path>` filled by a `linearGradient` with 2 pairs of hard-stopped color stops — one shape, two colors, rather than two separately-colored glyphs layered on top of each other (❤️/🤍 are two different Unicode glyphs; stacking them risked visible misalignment as the "drain" moved). Gradient colors are the literal hex of `--danger`/`--text`/`--gold` rather than `var()` references, since CSS-custom-property support inside SVG presentation attributes is inconsistent enough across WebViews that hardcoding was judged the safer choice — flagged in a comment to keep them in sync by hand if the theme colors ever change. `client/src/css/styles.css` got the small layout rules for the heart row. `client/src/js/attempt.js` gained `renderHearts()`/`setHeartDrain()`, computing each heart's drained fraction from `a.livesUsedInRun`/`a.adLifeUsedThisLevel` and the current segment's elapsed fraction (reusing the exact same `a.currentSegmentMs`/`msRemaining()` math the countdown digits already use), called from `renderTimer()` every 50ms tick for smooth motion, and once more directly from `renderHud()` so a discrete event isn't left showing stale hearts for the ~50ms until the next tick.
+
+**Not touched:** `game-engine.js`, `score-replay.ts`, and the actual life-granting logic in `handleTimeout()`/`offerAdLife()` — purely a visual layer on top of state that already existed and was already correct.
+
+**Next session start point:** needs a device look — confirm the drain reads clearly at the HUD's small chip size, confirm the ad heart's gold tone is distinguishable from the 3 red life hearts, and confirm the reordering fix from the prior entry (timer bug) still holds now that `renderHud()` does more work per call. Every other standing Phase 12 item is untouched.
+
+---
+
 **2026-09-22 (device test) — Resume feature device-tested; timer bug found and fixed**
 
 Same session, continued. The resume feature built earlier this session (below) was reported working: "The game resumes even after closed fully and opened fresh." Confirmed with the account holder that board/score/moves-made all matched — the resumed state itself was correct, and doing so across a genuine full force-close (not just a backgrounded-tab reload) is intended behavior, not a leak: `localStorage` can't distinguish the two, and the server-side heartbeat/forfeit sweep is still what actually governs correctness either way, so there was never a reason to try to make it distinguish them.
