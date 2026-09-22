@@ -851,6 +851,47 @@ a.primary {
   overflow: visible;
 }
 
+/* Pulsing red outline on whichever heart corresponds to the segment
+   currently <=10s from running out — toggled via .heart-pulse by
+   renderHearts() in attempt.js. Two separate keyframes/selectors rather
+   than one: the scale belongs on the <svg> itself, the stroke belongs on
+   the <path> inside it, and animating unrelated CSS properties (transform,
+   stroke-width) off a single shared rule risks one being silently
+   misapplied to the wrong element. Same duration/easing on both keeps them
+   visually in sync as one pulse. Outline only — the fill (drain progress)
+   is untouched by this. */
+@keyframes heart-pulse-scale {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+@keyframes heart-pulse-stroke {
+  0%,
+  100% {
+    stroke-width: 1.5px;
+    stroke-opacity: 0.55;
+  }
+  50% {
+    stroke-width: 3.5px;
+    stroke-opacity: 1;
+  }
+}
+
+.heart-pulse {
+  animation: heart-pulse-scale 0.7s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}
+
+.heart-pulse path {
+  stroke: #ff5c5c;
+  animation: heart-pulse-stroke 0.7s ease-in-out infinite;
+}
+
 /* Timer: seconds run big and prominent; ms/µs run tiny underneath, rather
    than one flat string where every digit reads with equal weight. */
 
