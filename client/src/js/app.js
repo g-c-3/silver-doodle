@@ -155,8 +155,19 @@ async function routeAfterAuth(session) {
     document.getElementById('name-setup-input').value = '';
     showScreen('screen-name-setup');
   } else {
-    renderHome();
-    showScreen('screen-home');
+    // Client-side resume: a backgrounded tab reload (common on mobile
+    // browsers) used to drop the player back here with zero memory of an
+    // in-progress attempt. tryResume() checks localStorage for a snapshot
+    // belonging to this exact user, confirms it's still alive server-side,
+    // and — only if both check out — rebuilds the board and drops straight
+    // back into screen-game itself. Falls back to the normal Home routing
+    // in every other case (nothing saved, a different user's snapshot, or
+    // the attempt was already forfeited while the tab was gone).
+    const resumed = await Attempt.tryResume(session.user.id);
+    if (!resumed) {
+      renderHome();
+      showScreen('screen-home');
+    }
   }
 }
 
@@ -474,6 +485,10 @@ async function signOutToEmailScreen() {
   await Auth.signOut();
   state.session = null;
   state.profile = null;
+  // Also called after account deletion (see profile-delete-account-btn
+  // below) — either way, a shared device should never silently offer to
+  // resume this player's in-progress board under whoever signs in next.
+  Attempt.clearPersisted();
   document.getElementById('email-input').value = '';
   showScreen('screen-email');
 }

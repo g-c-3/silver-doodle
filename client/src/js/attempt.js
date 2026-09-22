@@ -125,6 +125,14 @@ const Attempt = (() => {
   const HINT_IDLE_MS = 5000; // no successful move for this long -> highlight all available moves
   const HEARTBEAT_INTERVAL_MS = 20000; // proves liveness to the Phase 8 forfeit-detection sweep
 
+  // Client-side in-progress-attempt persistence (see docs/ROADMAP.md's
+  // "Newly found gap, 2026-09-14" item and docs/DECISIONS.md's entry for
+  // this feature). Bumping this invalidates any snapshot saved by an older
+  // build (e.g. one with different THEMES/SLOT_MOVE_TARGETS) rather than
+  // risking a corrupt resume.
+  const RESUME_STORAGE_KEY = 'mese_inprogress_attempt_v1';
+  const RESUME_VERSION = 1;
+
   // COMPLIANCE FIX (2026-09-19, §5.14, report-2.3): this constant used to
   // be the real, live production ad unit ID, hardcoded with no test-mode
   // distinction — meaning every sideloaded dev/test build (which is EVERY
@@ -162,6 +170,7 @@ const Attempt = (() => {
   let hintTimeoutHandle = null;
   let hintedCells = []; // "r,c" keys currently glowing — re-applied by renderBoard() on every re-render
   let heartbeatHandle = null;
+  let currentUserId = null; // set by startAttempt()/tryResume() — scopes the resume snapshot to its owner
 
   function el(id) {
     return document.getElementById(id);
@@ -203,6 +212,12 @@ const Attempt = (() => {
   // returns its 26 pre-generated slots plus a fresh attempts row id.
   async function startAttempt() {
     window.showScreen('screen-loading');
+    // Scopes the resume snapshot (see persistAttempt() below) to whoever's
+    // actually playing — same reasoning as clearPersisted()'s sign-out call.
+    const {
+      data: { user },
+    } = await window.db.auth.getUser();
+    currentUserId = user ? user.id : null;
     let result;
     try {
       const { data, error } = await window.db.functions.invoke('start-attempt', { body: {} });
@@ -436,6 +451,232 @@ const Attempt = (() => {
       // eslint-disable-next-line no-console
       console.error('attempt-heartbeat failed:', err);
     }
+  }
+
+  // ---- Client-side resume ----
+  // Mobile browsers reload a backgrounded tab routinely when memory is
+  // reclaimed — without this, that reload dropped the player straight back
+  // to Home with zero memory of the attempt, leaving its `attempts` row
+  // stuck at status: 'in_progress' until the Phase 8 forfeit sweep (which
+  // already existed and still runs regardless) eventually gave up on it.
+  // This only rebuilds the CLIENT's view of an attempt already known-good
+  // server-side — it changes nothing about what score-replay trusts or how
+  // an attempt is scored.
+  //
+  // The board and the seeded rng's internal state are never stored
+  // directly — the rng is a closure, not a plain value, and re-deriving
+  // both from {gameDefinitionId, slotIndex, currentLevelMoves} via the same
+  // trySwap() the live game already uses is simpler and can't silently
+  // drift from it. See resumeAttempt() below.
+
+  function persistAttempt() {
+    if (!a || a.status === 'completed') return;
+    try {
+      // a.tickTarget isn't set yet the very first time a fresh level's
+      // renderHud() runs (startTimer() is called right after it) — fall
+      // back to the level's full segment length rather than reading a
+      // stale-or-undefined deadline in that narrow window.
+      const remainingMs =
+        typeof a.tickTarget === 'number' && !Number.isNaN(a.tickTarget) ? msRemaining() : a.currentSegmentMs;
+      const snapshot = {
+        version: RESUME_VERSION,
+        userId: currentUserId,
+        attemptId: a.attemptId,
+        gameDefinitionId: a.gameDefinitionId,
+        slots: a.slots,
+        slotIndex: a.slotIndex,
+        levelsReached: a.levelsReached,
+        totalScore: a.totalScore,
+        timeBonusMicros: a.timeBonusMicros,
+        livesUsedInRun: a.livesUsedInRun,
+        adLivesUsedInRun: a.adLivesUsedInRun,
+        recentThemeIds: a.recentThemeIds,
+        payloadLevels: a.payloadLevels,
+        isBonusLevel: a.isBonusLevel,
+        adLifeUsedThisLevel: a.adLifeUsedThisLevel,
+        currentLevelMoves: a.currentLevelMoves,
+        levelElapsedBaseMs: a.levelElapsedBaseMs,
+        currentSegmentMs: a.currentSegmentMs,
+        livesUsedAtLevelStart: a.livesUsedAtLevelStart,
+        deadlineEpochMs: Date.now() + remainingMs,
+      };
+      window.localStorage.setItem(RESUME_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch (err) {
+      // Private browsing, a full quota, or storage disabled entirely —
+      // resume is a nice-to-have; never worth disrupting live play over.
+      // eslint-disable-next-line no-console
+      console.error('persistAttempt failed (non-fatal):', err);
+    }
+  }
+
+  // Exposed as Attempt.clearPersisted() too — app.js calls it on sign-out
+  // and account deletion so a shared device never silently offers to
+  // resume the previous player's board under the next player's session.
+  function clearPersistedAttempt() {
+    try {
+      window.localStorage.removeItem(RESUME_STORAGE_KEY);
+    } catch (err) {
+      /* nothing to clean up if storage isn't available at all */
+    }
+  }
+
+  function loadPersistedAttempt() {
+    try {
+      const raw = window.localStorage.getItem(RESUME_STORAGE_KEY);
+      if (!raw) return null;
+      const saved = JSON.parse(raw);
+      if (saved.version !== RESUME_VERSION) return null;
+      return saved;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  // Called once at boot (app.js's routeAfterAuth()) after the signed-in
+  // user is known. Returns true if it resumed play (screen-game is now
+  // showing); false means there was nothing to resume, it belonged to a
+  // different user, or it no longer checked out — the caller falls back to
+  // its normal Home routing in every false case.
+  async function tryResume(userId) {
+    const saved = loadPersistedAttempt();
+    if (!saved || saved.userId !== userId) return false;
+
+    // Confirm the attempt is still alive server-side before spending any
+    // effort reconstructing it locally — forfeit-stale-attempts (Phase 8)
+    // may already have given up on it while the tab was gone, and a stale
+    // local snapshot should never override that. Deliberately just as
+    // strict on a genuine network failure here as on a confirmed forfeit —
+    // resuming is only ever a convenience, and the attempt's real state
+    // still lives safely on the server either way, governed by the same
+    // heartbeat/forfeit mechanism as if this tab had simply stayed open.
+    let heartbeatOk = false;
+    try {
+      const { data, error } = await window.db.functions.invoke('attempt-heartbeat', {
+        body: { attemptId: saved.attemptId },
+      });
+      if (error) throw error;
+      heartbeatOk = !(data && data.forfeited);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Resume heartbeat check failed:', err);
+      heartbeatOk = false;
+    }
+    if (!heartbeatOk) {
+      clearPersistedAttempt();
+      return false;
+    }
+
+    try {
+      resumeAttempt(saved);
+      return true;
+    } catch (err) {
+      // A corrupted snapshot, or one saved by a build with different
+      // THEMES/SLOT_MOVE_TARGETS, must never crash the app on boot —
+      // discard it and let the player start fresh from Home instead.
+      // eslint-disable-next-line no-console
+      console.error('Resume reconstruction failed, discarding saved attempt:', err);
+      clearPersistedAttempt();
+      a = null;
+      return false;
+    }
+  }
+
+  // Rebuilds `a` and the current level's board directly into mid-play —
+  // never through prepareLevel()/beginLevel(), since both would show the
+  // reveal screen and/or reset progress already made this level.
+  function resumeAttempt(saved) {
+    currentUserId = saved.userId;
+
+    a = {
+      attemptId: saved.attemptId,
+      gameDefinitionId: saved.gameDefinitionId,
+      slots: saved.slots,
+      slotIndex: saved.slotIndex,
+      levelsReached: saved.levelsReached,
+      totalScore: saved.totalScore,
+      timeBonusMicros: saved.timeBonusMicros,
+      livesUsedInRun: saved.livesUsedInRun,
+      adLivesUsedInRun: saved.adLivesUsedInRun,
+      recentThemeIds: saved.recentThemeIds,
+      payloadLevels: saved.payloadLevels,
+      serverResult: null,
+      submitting: false,
+      submitAttempts: 0,
+    };
+    selectedCell = null;
+    a.isBonusLevel = saved.isBonusLevel;
+    a.adLifeUsedThisLevel = saved.adLifeUsedThisLevel;
+
+    // Re-derives this level's theme/emoji/target metadata exactly the way
+    // prepareLevel() would — deterministic from gameDefinitionId/slotIndex/
+    // recentThemeIds, so it's safe to recompute rather than store it too.
+    if (a.isBonusLevel) {
+      const pickRng = GameEngine.makeRng(`${a.gameDefinitionId}:bonus:${a.slotIndex}:pick`);
+      a.levelEmojis = a.recentThemeIds.flatMap((id) => shuffle(THEMES[id].emojis, pickRng).slice(0, 2));
+      a.levelThemeName = 'Bonus mix';
+      a.levelMovesTarget = null;
+      a.levelSeconds = BONUS_SECONDS;
+      a.levelIcon = '🎁';
+      setThemeAccent('var(--gold)');
+      a.rng = GameEngine.makeRng(`${a.gameDefinitionId}:bonus:${a.slotIndex}:board`);
+      a.board = GameEngine.generatePlayableBoard(a.rng);
+    } else {
+      const themeId = a.slots[a.slotIndex].themeIndex;
+      a.levelEmojis = THEMES[themeId].emojis;
+      a.levelThemeName = THEMES[themeId].name;
+      a.levelMovesTarget = SLOT_MOVE_TARGETS[a.slotIndex];
+      a.levelSeconds = LEVEL_SECONDS;
+      a.levelIcon = a.levelEmojis[0];
+      setThemeAccent(themeAccentColor(themeId));
+      a.rng = GameEngine.makeRng(`${a.gameDefinitionId}:slot:${a.slotIndex}:refill`);
+      a.board = a.slots[a.slotIndex].boardPattern.map((row) => row.slice());
+    }
+
+    // Replays every move made before the reload through the SAME trySwap()
+    // the live game itself uses — deterministically lands on the exact
+    // board + rng state play was at, the same trust model score-replay.ts
+    // already uses server-side, just run locally.
+    a.currentLevelMoves = [];
+    a.levelScore = 0;
+    (saved.currentLevelMoves || []).forEach(([r1, c1, r2, c2]) => {
+      const result = GameEngine.trySwap(a.board, r1, c1, r2, c2, a.rng);
+      if (!result.valid) {
+        throw new Error('Saved move replayed as invalid — snapshot is inconsistent with the current build.');
+      }
+      a.board = result.board;
+      a.levelScore += result.score;
+      a.currentLevelMoves.push([r1, c1, r2, c2]);
+    });
+    a.movesMade = a.isBonusLevel ? 0 : a.currentLevelMoves.length;
+
+    a.levelElapsedBaseMs = saved.levelElapsedBaseMs;
+    a.currentSegmentMs = saved.currentSegmentMs;
+    a.livesUsedAtLevelStart = saved.livesUsedAtLevelStart;
+    a.locked = false;
+    a.animating = false;
+    a.pendingTimeout = false;
+
+    // Timer deadline set BEFORE renderHud() (which persists a fresh
+    // snapshot as a side effect) so that save reads a real value instead of
+    // an undefined a.tickTarget — see persistAttempt()'s own fallback too.
+    // The level timer never pauses (startTimer()/tick()), so real time that
+    // passed while the tab was gone counts exactly as it would have if the
+    // tab had simply stayed open.
+    const remainingMs = Math.max(0, saved.deadlineEpochMs - Date.now());
+    a.tickTarget = performance.now() + remainingMs;
+
+    setMessage('');
+    renderBoard();
+    renderHud();
+
+    stopTicking();
+    tickHandle = setInterval(tick, 50);
+    tick();
+
+    clearHints();
+    scheduleHintTimer();
+    startHeartbeat();
+    window.showScreen('screen-game');
   }
 
   // Cumulative elapsed ms on THIS level's own clock, since its very first
@@ -696,6 +937,7 @@ const Attempt = (() => {
     a.totalScore += a.levelScore; // last-shown score is preserved, not dropped
     pushLevelRecord('failed');
     a.status = 'completed';
+    clearPersistedAttempt(); // attempt is over either way — nothing left to resume
     renderSummary();
     window.showScreen('screen-attempt-summary');
     submitAttempt();
@@ -947,6 +1189,7 @@ const Attempt = (() => {
     stopTicking();
     clearHints();
     a.status = 'completed';
+    clearPersistedAttempt(); // attempt is over either way — nothing left to resume
     renderSummary();
     window.showScreen('screen-attempt-summary');
     submitAttempt();
@@ -1344,6 +1587,10 @@ const Attempt = (() => {
       scoreEl.classList.add('score-pop');
     }
     el('game-timebonus').textContent = formatTimeBonus(a.timeBonusMicros);
+    // Runs after every meaningful state change this function is already
+    // called from (level start, a move settling, a life/ad-life used) —
+    // see persistAttempt()'s own header comment for why here specifically.
+    persistAttempt();
   }
 
   function formatCountdown(remainingMs) {
@@ -1433,6 +1680,8 @@ const Attempt = (() => {
     skipBonus,
     continueAfterLevelComplete,
     retrySubmitAttempt,
+    tryResume,
+    clearPersisted: clearPersistedAttempt,
   };
 })();
 
