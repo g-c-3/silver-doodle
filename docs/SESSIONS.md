@@ -4,6 +4,22 @@ Most recent entry first.
 
 ---
 
+**2026-09-22 (later) — Client-side in-progress-attempt persistence built**
+
+Fresh session (`Go`). All standing Phase 12 items were either blocked on the account holder (custom SMTP, key rotation, placeholders needing real values) or needed a real device (the AdMob approval wait, the cascade-animation playtest), so no code task in that queue was actionable this session. The one open item that was pure engineering work — the client-side attempt-persistence gap flagged 2026-09-14 and left unscoped pending a design decision — was picked up instead. Asked which of two designs to build (resume vs. detect-and-abandon); no preference was given, so resume was chosen and the reasoning recorded in `DECISIONS.md`: detect-and-abandon would burn one of only 12 daily attempt slots on nothing more than an accidental tab reload, which the existing Phase 8 forfeit-sweep already treats as a real cost worth avoiding elsewhere in the app.
+
+**Built** (`client/src/js/attempt.js`, `client/src/js/app.js`): a snapshot-to-`localStorage` layer. `persistAttempt()` runs at the end of `renderHud()` — already the exact call site hit after every meaningful in-level change (level start, a settled move, a life or ad-life used) — and saves enough to reconstruct the attempt: attempt/game-definition ids, the full `slots` array, running totals, the finished-level payload, and the current level's move list so far. Deliberately does NOT try to persist the seeded rng's own internal state, since `GameEngine.makeRng()` returns a closure, not a plain value — instead, `resumeAttempt()` re-derives a fresh rng from the same seed string the level originally used and replays every saved move back through it via the existing `GameEngine.trySwap()`, landing on the exact same board and rng state deterministically, the same trust model `score-replay.ts` already uses server-side for the real scoring replay. The level timer is restored from a saved wall-clock deadline (`Date.now() + remaining`, not a `performance.now()` value, which resets across a reload) so time that passed while the tab was gone counts exactly as it would have if the tab had stayed open — consistent with the timer never pausing elsewhere in the app.
+
+`tryResume(userId)`, called from `app.js`'s `routeAfterAuth()` before it would otherwise route to Home, first confirms the saved attempt is still alive server-side via the existing `attempt-heartbeat` function — deliberately just as strict on a genuine network failure as on a confirmed forfeit, since resuming is only ever a UX convenience and the attempt's real state stays governed by the server's own heartbeat/forfeit mechanism regardless. Any doubt (network failure, confirmed forfeit, a corrupted snapshot, or one saved by a build with different `THEMES`/`SLOT_MOVE_TARGETS`) discards the snapshot and falls back to normal Home routing rather than risking a broken resume. `Attempt.clearPersisted()` is called on sign-out and account deletion so a shared device never offers to resume the previous player's board under the next session.
+
+**Not touched:** `game-engine.js` and `score-replay.ts` — this is purely a client-side rebuild of state the server already independently trusts; no scoring or validation logic changed.
+
+**Decisions made:** resume (not detect-and-abandon) chosen for the reason above; recorded in `DECISIONS.md` along with the "replay through trySwap() rather than serialize the rng" and "wall-clock deadline, not performance.now()" design choices.
+
+**Next session start point:** needs a real device test — background the app mid-level (ideally mid-cascade-chain, to also confirm the 2026-09-22-earlier animation work survives a resume), let Android reclaim the tab, reopen, and confirm the board/timer/HUD/lives all come back exactly as they were. Every other standing Phase 12 item (AdMob account approval wait, service-role key rotation, custom SMTP, privacy-policy placeholders, device screenshots, Play Console account) is untouched and still blocked the same way it was at the end of the prior session.
+
+---
+
 **2026-09-22 — AdMob ad-reward validation root-caused and fixed (dev/test ad unit created); Retry-button feedback fixed; scoring mechanism reviewed and a real animation gap fixed**
 
 Continuation (`Continue`), picked up from a device report: the attempt-summary screen stuck on "Not validated — Confirming your ad reward," eventually failing with "no verified ad completion found," and an apparently unresponsive Retry button.
