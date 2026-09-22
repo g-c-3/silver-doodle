@@ -1589,10 +1589,11 @@ const Attempt = (() => {
   function renderHud() {
     renderThemeBanner();
     el('game-moves').textContent = a.isBonusLevel ? '—' : `${a.movesMade}/${a.levelMovesTarget}`;
-    const livesLeft = STARTING_LIVES - a.livesUsedInRun;
-    el('game-lives').textContent = a.isBonusLevel
-      ? '—'
-      : '❤️'.repeat(Math.max(0, livesLeft)) + '🤍'.repeat(Math.min(STARTING_LIVES, a.livesUsedInRun)) + (a.adLifeUsedThisLevel ? ' 🎬' : '');
+    // Hearts themselves are drawn by renderHearts() (driven every tick by
+    // renderTimer(), and also called once more right here so a discrete
+    // event like a level start isn't left showing stale state for the
+    // ~50ms until the next tick fires).
+    renderHearts(msRemaining());
 
     const scoreEl = el('game-score');
     const newScoreText = Math.round(a.totalScore + a.levelScore).toLocaleString();
@@ -1618,11 +1619,70 @@ const Attempt = (() => {
     return { sec: pad(s, 2), sub: `${pad(ms, 3)}:${pad(Math.max(0, fractionalUs), 3)}` };
   }
 
+  // ---- Hearts (lives) drain visual ----
+  // 3 life hearts, plus a 4th "ad heart" hidden until an ad-life is used.
+  // Each one drains red -> white from the top down over the course of its
+  // own segment: heart 0 during the level's initial LEVEL_SECONDS, heart 1
+  // during the LIFE_EXTENSION_SECONDS the 1st life's use grants, heart 2
+  // during the LIFE_EXTENSION_SECONDS the 2nd life's use grants, and the ad
+  // heart during the LIFE_EXTENSION_SECONDS an ad-life grants. The segment
+  // the 3rd (final) life's use grants — after all 3 hearts are already
+  // fully drained, before an ad is even offered — has no dedicated heart
+  // of its own; it relies on the plain timer chip alone, same as always.
+  //
+  // Each heart is one <path>, filled by a linearGradient with 2 pairs of
+  // hard-stopped stops (see index.html) rather than 2 separately-colored
+  // shapes layered on top of each other — guarantees the drained and
+  // undrained portions are pixel-identical in shape, with no risk of two
+  // different glyphs/paths drifting out of alignment.
+  function setHeartDrain(idKey, fraction) {
+    const pct = `${Math.round(Math.max(0, Math.min(1, fraction)) * 100)}%`;
+    const stopA = document.getElementById(`heart-${idKey}-mid-a`);
+    const stopB = document.getElementById(`heart-${idKey}-mid-b`);
+    if (stopA) stopA.setAttribute('offset', pct);
+    if (stopB) stopB.setAttribute('offset', pct);
+  }
+
+  function renderHearts(remainingMs) {
+    if (!a) return;
+    const showHearts = !a.isBonusLevel;
+    el('hearts-row').classList.toggle('hidden', !showHearts);
+    el('hearts-dash').classList.toggle('hidden', showHearts);
+    if (!showHearts) return;
+
+    // Defensive against a not-yet-finite remainingMs (e.g. called in some
+    // future edge case before a.tickTarget exists) — never let a NaN
+    // reach setAttribute(), which would silently no-op or throw.
+    const safeRemaining = Number.isFinite(remainingMs) ? remainingMs : 0;
+    const segmentFraction =
+      a.currentSegmentMs > 0 ? Math.max(0, Math.min(1, 1 - safeRemaining / a.currentSegmentMs)) : 0;
+
+    for (let i = 0; i < STARTING_LIVES; i++) {
+      let frac;
+      if (i < a.livesUsedInRun) frac = 1; // already spent this run — fully white
+      else if (i === a.livesUsedInRun) frac = segmentFraction; // this heart's segment is the current one
+      else frac = 0; // not reached yet — fully red
+      setHeartDrain(String(i), frac);
+    }
+
+    const adHeart = el('heart-ad');
+    if (a.adLifeUsedThisLevel) {
+      adHeart.classList.remove('hidden');
+      // The ad heart only ever exists for the one segment its own use
+      // granted — nothing later reuses this slot, so the current
+      // segment's fraction is always the right one here.
+      setHeartDrain('ad', segmentFraction);
+    } else {
+      adHeart.classList.add('hidden');
+    }
+  }
+
   function renderTimer(remainingMs) {
     const { sec, sub } = formatCountdown(remainingMs);
     el('game-timer-sec').textContent = sec;
     el('game-timer-sub').textContent = sub;
     el('game-timer-sec').closest('.hud-chip-timer').classList.toggle('timer-warn', remainingMs <= 10000);
+    renderHearts(remainingMs);
   }
 
   function formatTimeBonus(micros) {
