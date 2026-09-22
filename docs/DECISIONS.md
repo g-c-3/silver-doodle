@@ -2,6 +2,14 @@
 
 ADR-style log, most recent at bottom of each dated block. Written in impersonal third person; no attribution to individuals.
 
+## 2026-09-22 (hearts) — Free playtime before an ad is required cut from 4 minutes to 3; the last life no longer buys a segment of its own
+
+**Requested directly, not raised as a bug.** Previously, all `STARTING_LIVES` (3) life-uses granted another `LIFE_EXTENSION_SECONDS` (60s) segment on top of the level's initial 60s, for 4 total free minutes before an ad became necessary. Changed so only the first `STARTING_LIVES - 1` (2) lives buy a segment — the 3rd (last) life is still marked spent, so its heart still shows fully drained, but it no longer extends play; the ad offer appears immediately instead. Net free playtime: 3 minutes, matching exactly the 3 life hearts shown in the HUD (no time budget left over that isn't represented by a heart).
+
+**Ad-cadence note:** this makes the rewarded-ad prompt appear sooner within a level (after 3 minutes of free play rather than 4), not more often — it's still the same single opt-in rewarded placement per level it always was, not an added interstitial or a second prompt. Recorded here mainly because it's a real, deliberate change to the game's monetization pacing, not because it conflicts with the standing rewarded-over-interstitial preference.
+
+**Implementation note for future changes to this area:** the last life's segment length (`a.currentSegmentMs`) is deliberately left un-banked in `handleTimeout()` when this branch fires — it's picked up by `offerAdLife()`'s own ad-success handler exactly the way the segment that used to trigger the ad offer always was banked, so `currentLevelElapsedMs()`/the time-bonus accumulator don't need to change even though a different segment now plays that role.
+
 ## 2026-09-22 (later) — In-progress attempts resume from a local snapshot rather than being abandoned; the rng is never serialized directly
 
 **Resume was chosen over detect-and-abandon for the tab-reload gap flagged 2026-09-14.** Two designs existed: save enough locally to rebuild the exact board and drop the player back into play, or simply let the server's existing stale-attempt detection notice the orphaned row and force the player to start a fresh attempt next time. No preference was stated when asked directly, so the choice was made on the merits: detect-and-abandon discards a legitimate, already-partly-played attempt for a cause as ordinary as a mobile browser reclaiming a backgrounded tab's memory, and the app only grants 12 attempt slots a day — burning one on an accidental reload is a real cost the rest of the app already goes out of its way to avoid (the multi-second submit-retry logic, the heartbeat/forfeit generous timeout window). Resume has no such cost and nothing about it weakens score integrity, since the server never trusts anything about the resumed state beyond what it would have trusted anyway.

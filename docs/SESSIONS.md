@@ -4,6 +4,22 @@ Most recent entry first.
 
 ---
 
+**2026-09-22 (hearts pulse + budget cut) — Pulsing hearts in the last 10s; free playtime before an ad cut from 4 minutes to 3**
+
+Same session, continued. Two requests:
+
+1. **Pulsing hearts.** Whichever heart corresponds to the segment currently running now gets a pulsing red outline once that segment's own remaining time drops to <=10s — the same threshold the countdown digits' `.timer-warn` already uses. Outline only, not the fill: the drain progress (red-to-white) is untouched by this, the pulse is a separate red `stroke` on the same `<path>`, driven by 2 small keyframes (one scaling the `<svg>` itself, one pulsing the path's `stroke-width`/`stroke-opacity`) toggled via a `.heart-pulse` class `renderHearts()` now applies to at most one heart at a time.
+
+2. **Free playtime cut from 4 minutes to 3.** Previously all `STARTING_LIVES` (3) life-uses granted another `LIFE_EXTENSION_SECONDS` (60s) segment on top of the initial 60s, for 4 free minutes total before an ad became necessary. Now only the first `STARTING_LIVES - 1` (2) do — the 3rd (last) life still gets marked spent (so the 3rd heart shows fully drained, and the ad is offered), but no longer buys a segment of its own. Total free time: 60s initial + 2x60s life-granted = 180s (3 minutes), matching exactly the 3 hearts, then only the ad-offer prompt (no more silent +60s). This also incidentally simplifies `renderHearts()`'s own documented gap from the original build: the previously-undrawn 4th segment (the one the 3rd life used to grant) no longer exists at all, so there's no longer any segment left without a corresponding heart.
+
+Time-bookkeeping detail worth a second look if this area gets touched again: for the 3rd life, `a.currentSegmentMs` is deliberately left unbanked/untouched in `handleTimeout()` (unlike the first two lives, which bank-and-reset it immediately) — it's picked up by `offerAdLife()`'s own ad-success handler exactly the way the segment that used to trigger the ad offer always was, so time-bonus accounting doesn't change even though which segment plays that role did.
+
+**Not touched:** `game-engine.js`, `score-replay.ts` — this changes when the client offers an ad and what it shows, not how score/time-bonus are computed or verified.
+
+**Next session start point:** device check — confirm the pulse reads clearly at the HUD's small chip size and doesn't look janky layered on top of the drain gradient, and play through a full attempt to confirm the ad offer now appears at 3 minutes of free play, not 4. Every other standing Phase 12 item is untouched.
+
+---
+
 **2026-09-22 (hearts) — Lives display rebuilt as animated draining hearts**
 
 Same session, continued. Requested feature: instead of the existing static text-based lives display (full/empty heart emoji, counted from `a.livesUsedInRun`), each life's heart should visually drain red-to-white from the top down over the course of its own 60-second segment, and the ad-life indicator (previously a static 🎬 appended once used) should become a 4th heart doing the same, for the ad's own segment.
