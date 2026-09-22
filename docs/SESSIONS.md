@@ -4,6 +4,20 @@ Most recent entry first.
 
 ---
 
+**2026-09-22 (device test) — Resume feature device-tested; timer bug found and fixed**
+
+Same session, continued. The resume feature built earlier this session (below) was reported working: "The game resumes even after closed fully and opened fresh." Confirmed with the account holder that board/score/moves-made all matched — the resumed state itself was correct, and doing so across a genuine full force-close (not just a backgrounded-tab reload) is intended behavior, not a leak: `localStorage` can't distinguish the two, and the server-side heartbeat/forfeit sweep is still what actually governs correctness either way, so there was never a reason to try to make it distinguish them.
+
+The timer was also reported as "off/reset." Traced to a real ordering bug: `persistAttempt()` runs off the end of `renderHud()`, but in 3 places `renderHud()` was being called *before* the line that actually sets the new deadline — `beginLevel()` called `renderHud()` before `startTimer()`, and both branches of "a life gets used" (`handleTimeout()`'s own-life path, `offerAdLife()`'s ad-life success handler) called `renderHud()` before `extendTimer()`. In that narrow window (right after a level starts, or right after a life is used, before any further move), the saved deadline was the *previous* segment's — stale for a fresh level, and already-expired-or-zero right after a life/ad-life use, which explains the report. Cause: three call sites had `renderHud()` before the corresponding `startTimer()`/`extendTimer()` call. Fix: reordered all three so the timer is set first. Why correct: `startTimer()`/`extendTimer()` don't read anything `renderHud()` sets up, and `renderHud()` doesn't depend on the old deadline still being in place, so the reorder changes nothing else about behavior — confirmed by re-reading both functions in full before making the change, not just inferring it.
+
+`persistAttempt()`'s own fallback comment (for when `a.tickTarget` isn't a number yet) was also updated — it's now a defensive-only fallback rather than the primary safeguard it read as before, since the 3 call sites it was protecting against are fixed at the source.
+
+**Not touched:** `game-engine.js`, `score-replay.ts`, and the resume design itself (`persistAttempt()`/`tryResume()`/`resumeAttempt()`) — the bug was purely in call ordering around 3 existing functions, not in the persistence/replay logic.
+
+**Next session start point:** re-test on device — specifically, force-close right after a fresh level starts (before any move), and right after a life or ad-life is used, to confirm the timer now comes back showing the correct remaining time in both cases. Every other standing Phase 12 item (AdMob account approval wait, service-role key rotation, custom SMTP, privacy-policy placeholders, device screenshots, Play Console account) is untouched and still blocked the same way it was at the end of the prior session.
+
+---
+
 **2026-09-22 (later) — Client-side in-progress-attempt persistence built**
 
 Fresh session (`Go`). All standing Phase 12 items were either blocked on the account holder (custom SMTP, key rotation, placeholders needing real values) or needed a real device (the AdMob approval wait, the cascade-animation playtest), so no code task in that queue was actionable this session. The one open item that was pure engineering work — the client-side attempt-persistence gap flagged 2026-09-14 and left unscoped pending a design decision — was picked up instead. Asked which of two designs to build (resume vs. detect-and-abandon); no preference was given, so resume was chosen and the reasoning recorded in `DECISIONS.md`: detect-and-abandon would burn one of only 12 daily attempt slots on nothing more than an accidental tab reload, which the existing Phase 8 forfeit-sweep already treats as a real cost worth avoiding elsewhere in the app.
