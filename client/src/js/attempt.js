@@ -332,8 +332,12 @@ const Attempt = (() => {
 
     setMessage('');
     renderBoard();
-    renderHud();
+    // startTimer() BEFORE renderHud(): renderHud() now also persists a
+    // resume snapshot (see persistAttempt()), which reads a.tickTarget —
+    // must be this level's fresh deadline, not whatever was left over from
+    // the level that just finished. See docs/DECISIONS.md, 2026-09-22.
     startTimer(a.levelSeconds);
+    renderHud();
     clearHints();
     scheduleHintTimer();
     window.showScreen('screen-game');
@@ -472,10 +476,14 @@ const Attempt = (() => {
   function persistAttempt() {
     if (!a || a.status === 'completed') return;
     try {
-      // a.tickTarget isn't set yet the very first time a fresh level's
-      // renderHud() runs (startTimer() is called right after it) — fall
-      // back to the level's full segment length rather than reading a
-      // stale-or-undefined deadline in that narrow window.
+      // 2026-09-22 fix: beginLevel()/handleTimeout()/offerAdLife() were
+      // reordered to call startTimer()/extendTimer() before renderHud(),
+      // specifically so a.tickTarget is always this segment's real deadline
+      // by the time this runs — a real device test caught the bug where
+      // renderHud() ran first and persisted the *previous* segment's
+      // stale-or-expired deadline instead. This check is now a defensive
+      // fallback only (e.g. a future call site that violates that
+      // ordering), not the primary safeguard.
       const remainingMs =
         typeof a.tickTarget === 'number' && !Number.isNaN(a.tickTarget) ? msRemaining() : a.currentSegmentMs;
       const snapshot = {
@@ -728,8 +736,12 @@ const Attempt = (() => {
       a.levelElapsedBaseMs += a.currentSegmentMs;
       a.currentSegmentMs = LIFE_EXTENSION_SECONDS * 1000;
       showToast(`💗 Life used (${a.livesUsedInRun}/${STARTING_LIVES}) — +${LIFE_EXTENSION_SECONDS}s`);
-      renderHud();
+      // extendTimer() BEFORE renderHud(): same reasoning as beginLevel()'s
+      // reordering above — renderHud() persists a.tickTarget, which must
+      // already reflect the extension, not the just-expired deadline that
+      // triggered this branch.
       extendTimer(LIFE_EXTENSION_SECONDS);
+      renderHud();
       return;
     }
     if (!a.adLifeUsedThisLevel) {
@@ -891,9 +903,13 @@ const Attempt = (() => {
         a.currentSegmentMs = LIFE_EXTENSION_SECONDS * 1000;
         setMessage('');
         showToast(`🎬 Ad watched — +${LIFE_EXTENSION_SECONDS}s`);
-        renderHud();
         a.locked = false; // re-enable play now that the prompt is resolved
+        // extendTimer() BEFORE renderHud(): same reasoning as beginLevel()'s
+        // reordering above — renderHud() persists a.tickTarget, which must
+        // already reflect the extension, not the just-expired deadline that
+        // led to this ad prompt.
         extendTimer(LIFE_EXTENSION_SECONDS);
+        renderHud();
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('Rewarded ad (life) failed:', err);
