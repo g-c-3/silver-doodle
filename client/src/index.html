@@ -163,7 +163,63 @@
         </div>
         <div class="hud-chip">
           <span class="hud-chip-label">Lives</span>
-          <span class="hud-chip-value hud-lives" id="game-lives"></span>
+          <span class="hud-chip-value hud-lives" id="game-lives">
+            <!-- 3 life hearts + a 4th "ad heart" (hidden until an ad-life is
+                 used). Each drains red -> white from the top down over the
+                 course of its own segment — see attempt.js's renderHearts().
+                 Colors are the literal hex of --danger/--text/--gold rather
+                 than var() references: SVG presentation attributes' support
+                 for CSS custom properties is inconsistent enough across
+                 WebViews that hardcoding here was judged the safer choice;
+                 keep these in sync with :root by hand if either changes. -->
+            <span class="hearts-row" id="hearts-row">
+              <svg class="heart-svg" id="heart-0" viewBox="0 0 24 24" aria-hidden="true">
+                <defs>
+                  <linearGradient id="heart-grad-0" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#f2f0fa" />
+                    <stop id="heart-0-mid-a" offset="0%" stop-color="#f2f0fa" />
+                    <stop id="heart-0-mid-b" offset="0%" stop-color="#ff5c5c" />
+                    <stop offset="100%" stop-color="#ff5c5c" />
+                  </linearGradient>
+                </defs>
+                <path fill="url(#heart-grad-0)" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+              </svg>
+              <svg class="heart-svg" id="heart-1" viewBox="0 0 24 24" aria-hidden="true">
+                <defs>
+                  <linearGradient id="heart-grad-1" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#f2f0fa" />
+                    <stop id="heart-1-mid-a" offset="0%" stop-color="#f2f0fa" />
+                    <stop id="heart-1-mid-b" offset="0%" stop-color="#ff5c5c" />
+                    <stop offset="100%" stop-color="#ff5c5c" />
+                  </linearGradient>
+                </defs>
+                <path fill="url(#heart-grad-1)" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+              </svg>
+              <svg class="heart-svg" id="heart-2" viewBox="0 0 24 24" aria-hidden="true">
+                <defs>
+                  <linearGradient id="heart-grad-2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#f2f0fa" />
+                    <stop id="heart-2-mid-a" offset="0%" stop-color="#f2f0fa" />
+                    <stop id="heart-2-mid-b" offset="0%" stop-color="#ff5c5c" />
+                    <stop offset="100%" stop-color="#ff5c5c" />
+                  </linearGradient>
+                </defs>
+                <path fill="url(#heart-grad-2)" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+              </svg>
+              <svg class="heart-svg heart-ad hidden" id="heart-ad" viewBox="0 0 24 24" aria-hidden="true">
+                <defs>
+                  <linearGradient id="heart-grad-ad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#f2f0fa" />
+                    <stop id="heart-ad-mid-a" offset="0%" stop-color="#f2f0fa" />
+                    <stop id="heart-ad-mid-b" offset="0%" stop-color="#f5b942" />
+                    <stop offset="100%" stop-color="#f5b942" />
+                  </linearGradient>
+                </defs>
+                <path fill="url(#heart-grad-ad)" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+              </svg>
+            </span>
+            <span class="hearts-dash hidden" id="hearts-dash">&mdash;</span>
+          </span>
         </div>
       </div>
       <div class="score-strip">
