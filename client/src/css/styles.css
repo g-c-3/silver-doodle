@@ -829,6 +829,26 @@ a.primary {
 .hud-lives {
   font-size: 19px;
   letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Lives hearts: each one drains red -> white from the top down over its
+   own segment (see attempt.js's renderHearts()/setHeartDrain()). Sized to
+   sit comfortably in the existing chip without changing .hud-chip's own
+   height. */
+.hearts-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.heart-svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  overflow: visible;
 }
 
 /* Timer: seconds run big and prominent; ms/µs run tiny underneath, rather
