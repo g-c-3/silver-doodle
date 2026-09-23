@@ -313,6 +313,10 @@ document.getElementById('bonus-play-btn').addEventListener('click', () => {
   Attempt.acceptBonus();
 });
 
+document.getElementById('bonus-freebie-btn').addEventListener('click', () => {
+  Attempt.acceptFreebieBonus();
+});
+
 document.getElementById('level-complete-continue-btn').addEventListener('click', () => {
   Attempt.continueAfterLevelComplete();
 });

@@ -260,7 +260,10 @@ const Attempt = (() => {
 
   function prepareLevel(opts) {
     a.isBonusLevel = !!opts.bonus;
+    a.isFreebieBonus = !!opts.freebie; // practice-only bonus round — see acceptFreebieBonus()
     a.adLifeUsedThisLevel = false;
+    a.freebieUsedThisLevel = false;
+    setHeartAdColor(false); // reset to the default gold (verified-ad) tone; hidden either way until earned
 
     if (a.isBonusLevel) {
       const pickRng = GameEngine.makeRng(`${a.gameDefinitionId}:bonus:${a.slotIndex}:pick`);
@@ -501,7 +504,9 @@ const Attempt = (() => {
         recentThemeIds: a.recentThemeIds,
         payloadLevels: a.payloadLevels,
         isBonusLevel: a.isBonusLevel,
+        isFreebieBonus: a.isFreebieBonus,
         adLifeUsedThisLevel: a.adLifeUsedThisLevel,
+        freebieUsedThisLevel: a.freebieUsedThisLevel,
         currentLevelMoves: a.currentLevelMoves,
         levelElapsedBaseMs: a.levelElapsedBaseMs,
         currentSegmentMs: a.currentSegmentMs,
@@ -613,7 +618,10 @@ const Attempt = (() => {
     };
     selectedCell = null;
     a.isBonusLevel = saved.isBonusLevel;
+    a.isFreebieBonus = saved.isFreebieBonus;
     a.adLifeUsedThisLevel = saved.adLifeUsedThisLevel;
+    a.freebieUsedThisLevel = saved.freebieUsedThisLevel;
+    if (a.adLifeUsedThisLevel || a.freebieUsedThisLevel) setHeartAdColor(!!a.freebieUsedThisLevel);
 
     // Re-derives this level's theme/emoji/target metadata exactly the way
     // prepareLevel() would — deterministic from gameDefinitionId/slotIndex/
@@ -762,7 +770,7 @@ const Attempt = (() => {
       showToast(`💔 Out of lives (${a.livesUsedInRun}/${STARTING_LIVES})`);
       renderHud();
     }
-    if (!a.adLifeUsedThisLevel) {
+    if (!a.adLifeUsedThisLevel && !a.freebieUsedThisLevel) {
       offerAdLife();
       return;
     }
@@ -854,15 +862,16 @@ const Attempt = (() => {
   // "No ad available" (AdMob has nothing to serve — most commonly "No
   // fill." or "Publisher data not found." on a new/low-traffic ad unit,
   // not a code bug) gets its own honest, context-specific copy instead of
-  // a generic "ad failed" — context is 'life' or 'bonus', since what
-  // happens next differs (declining a life ends the attempt; declining a
-  // bonus just continues to the next regular level). The underlying
-  // decision — decline, same as any other ad failure — does NOT change
-  // based on this distinction: granting the life/bonus for free on a
-  // claimed no-fill would let a modified client always claim "no ad
+  // a generic "ad failed". The underlying decision on an actual ad
+  // failure — decline the real ad, same as any other failure reason — does
+  // NOT change based on this distinction: granting the life/bonus for free
+  // on a claimed no-fill would let a modified client always claim "no ad
   // available" to get free, unverified rewards, exactly the client-
   // trusted-flag hole score-replay's ad_verifications check (Phase 10)
-  // exists to close. Wording is the only thing this improves.
+  // exists to close. Wording is the only thing this improves — what
+  // actually happens next (the honestly-labeled freebie option, added
+  // 2026-09-23) is surfaced by offerAdLife()/acceptBonus() themselves, not
+  // baked into this string, so it doesn't need to change per context.
   const NO_AD_AVAILABLE_PATTERNS = [/no fill/i, /publisher data not found/i, /ad request expired/i, /no.?ad.?to.?show/i];
 
   function describeAdError(err, context) {
@@ -871,11 +880,7 @@ const Attempt = (() => {
       return 'Ad was closed before it finished — try again.';
     }
     if (NO_AD_AVAILABLE_PATTERNS.some((re) => re.test(msg))) {
-      // 'bonus' deliberately has no trailing clause here — acceptBonus()'s
-      // catch appends "Bonus round skipped this time." itself for every
-      // failure reason, not just this one, so adding it here too would
-      // duplicate it for this specific case.
-      return context === 'bonus' ? 'No ad available right now.' : 'No ad available right now — this attempt ends here.';
+      return context === 'bonus' ? 'No ad available right now.' : 'No ad available right now.';
     }
     if (msg) {
       return `Ad failed: ${msg}`;
@@ -900,6 +905,32 @@ const Attempt = (() => {
     const adBtn = document.createElement('button');
     adBtn.className = 'secondary';
     adBtn.textContent = 'Watch ad for extra time';
+
+    // Revealed only once a real ad attempt has actually failed below —
+    // never offered as a first option. Grants the same +60s a verified ad
+    // would, but is NEVER reported as adLifeUsed in the score-replay
+    // payload (an unverified claim there gets the WHOLE attempt rejected,
+    // not just this level — see the ad_verifications check in
+    // score-replay/index.ts). Instead pushLevelRecord() clamps this
+    // level's own elapsedMsAtEnd down to what it could honestly claim
+    // without the freebie, so the level's real move-based score still
+    // submits fine — only its own time bonus is what's sacrificed. See
+    // docs/DECISIONS.md.
+    const freebieBtn = document.createElement('button');
+    freebieBtn.className = 'secondary';
+    freebieBtn.textContent = `Continue anyway (+${LIFE_EXTENSION_SECONDS}s, no ad)`;
+    freebieBtn.style.display = 'none';
+    freebieBtn.addEventListener('click', () => {
+      a.freebieUsedThisLevel = true;
+      a.levelElapsedBaseMs += a.currentSegmentMs;
+      a.currentSegmentMs = LIFE_EXTENSION_SECONDS * 1000;
+      setMessage('');
+      showToast(`🎁 Free life — +${LIFE_EXTENSION_SECONDS}s (ads unavailable — won't count toward this level's time bonus)`);
+      setHeartAdColor(true); // grey, not gold — visually distinct from a verified ad
+      a.locked = false;
+      extendTimer(LIFE_EXTENSION_SECONDS);
+      renderHud();
+    });
 
     const errorLine = document.createElement('p');
     errorLine.className = 'muted';
@@ -939,6 +970,10 @@ const Attempt = (() => {
         // new/sideloaded ad unit) needs to reach the player directly.
         errorLine.textContent = describeAdError(err, 'life');
         errorLine.style.display = '';
+        // Ads aren't available (this failure, or any prior one this
+        // level) — offer the honestly-labeled freebie instead of leaving
+        // "give up" as the only way forward.
+        freebieBtn.style.display = '';
         // a.locked stays true — the board underneath stays non-interactive
         // until the player picks an option, same as the original lock.
       }
@@ -950,6 +985,7 @@ const Attempt = (() => {
     giveUpBtn.addEventListener('click', () => failAttempt());
 
     box.appendChild(adBtn);
+    box.appendChild(freebieBtn);
     box.appendChild(giveUpBtn);
     box.appendChild(errorLine);
   }
@@ -982,14 +1018,31 @@ const Attempt = (() => {
   // level's outcome is committed — not derived after the fact from a flat
   // move log, so there's no ambiguity about which moves/lives/timing belong
   // to which level once the shared life pool and slot index have moved on.
+  // NOTE: never called at all for a freebie bonus round — see
+  // acceptFreebieBonus()'s header comment; finishBonusLevel() skips this
+  // function entirely in that case.
   function pushLevelRecord(outcome) {
+    const livesUsedThisLevel = a.livesUsedInRun - a.livesUsedAtLevelStart; // regular-pool lives spent to keep this level alive
+    let elapsedMsAtEnd = Math.round(currentLevelElapsedMs());
+    if (a.freebieUsedThisLevel) {
+      // 2026-09-23: the life-extension freebie is never SSV-verified, so
+      // adLifeUsed below stays false for it — but its +60s must also never
+      // let elapsedMsAtEnd exceed what THIS level could honestly claim
+      // without it (score-replay's own per-level budget check rejects the
+      // level — and with it the whole submission — the same as an
+      // unverified adLifeUsed claim would). Clamping down here keeps this
+      // level's real, fully move-replayed score submittable; only its own
+      // time bonus is what the freebie costs. See docs/DECISIONS.md.
+      const honestBudgetMs = (a.isBonusLevel ? BONUS_SECONDS : LEVEL_SECONDS) * 1000 + livesUsedThisLevel * LIFE_EXTENSION_SECONDS * 1000;
+      elapsedMsAtEnd = Math.min(elapsedMsAtEnd, honestBudgetMs);
+    }
     a.payloadLevels.push({
       slot: a.isBonusLevel ? 'bonus' : SLOT_LETTERS[a.slotIndex],
       isBonus: a.isBonusLevel,
       moves: a.currentLevelMoves, // [[r1,c1,r2,c2], ...], in play order
-      livesUsedThisLevel: a.livesUsedInRun - a.livesUsedAtLevelStart, // regular-pool lives spent to keep this level alive
+      livesUsedThisLevel,
       adLifeUsed: a.adLifeUsedThisLevel,
-      elapsedMsAtEnd: Math.round(currentLevelElapsedMs()),
+      elapsedMsAtEnd,
       outcome, // 'completed' | 'failed' — 'failed' only ever the payload's last entry
     });
   }
@@ -1165,7 +1218,17 @@ const Attempt = (() => {
     if (a.status === 'completed') return;
     stopTicking();
     clearHints();
-    const leftoverMs = msRemaining();
+    // 2026-09-23: whenever the freebie was used this level, pushLevelRecord()
+    // clamps elapsedMsAtEnd down to this level's honest (non-freebie)
+    // budget — and since the freebie is only ever offered once that same
+    // honest budget is already exhausted, elapsedMsAtEnd only ever clamps
+    // TO that ceiling, never below it, so score-replay's own
+    // leftoverMs = budgetMs - elapsedMsAtEnd always comes out to exactly 0
+    // for that level, no exceptions. Mirrored here so the number shown on
+    // the level-complete screen matches what the server will actually
+    // confirm, instead of showing a real leftover-time bonus that then
+    // silently disappears once the attempt is submitted.
+    const leftoverMs = a.freebieUsedThisLevel ? 0 : msRemaining();
     const bankedThisLevel = bankedMicros(leftoverMs);
     a.timeBonusMicros += bankedThisLevel;
     a.totalScore += a.levelScore;
@@ -1202,6 +1265,23 @@ const Attempt = (() => {
     // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): see failAttempt().
     if (a.status === 'completed') return;
     clearHints();
+    if (a.isFreebieBonus) {
+      // Practice round — never recorded, never added to the score/levels
+      // count that reach score-replay. a.levelScore (the live "bonus
+      // points" the player just watched tick up) is deliberately left
+      // uncommitted here; see acceptFreebieBonus()'s header comment.
+      const next = a.slotIndex >= SLOT_LETTERS.length ? finishAttempt : () => prepareLevel({ bonus: false });
+      showLevelCompleteScreen({
+        eyebrow: 'Practice round over',
+        title: 'Nice practice round! 🎁',
+        points: a.levelScore,
+        timeBonusThisLevel: 0,
+        continueLabel: a.slotIndex >= SLOT_LETTERS.length ? 'See results' : 'Continue',
+        next,
+        practiceOnly: true, // renderLevelCompleteScreen() adds a "didn't count" note instead of adding to lc-total-score
+      });
+      return;
+    }
     a.totalScore += a.levelScore; // bonus score is never subject to the "incomplete = 0" rule
     a.levelsReached++;
     pushLevelRecord('completed');
@@ -1254,6 +1334,13 @@ const Attempt = (() => {
     el('lc-time-bonus').textContent = data.timeBonusThisLevel > 0 ? formatTimeBonus(data.timeBonusThisLevel) : '—';
     el('lc-total-score').textContent = Math.round(a.totalScore).toLocaleString();
     el('lc-lives').textContent = livesStatusText();
+    const note = el('level-complete-note');
+    if (data.practiceOnly) {
+      note.textContent = "Practice round — these points weren't added to your score.";
+      note.classList.remove('hidden');
+    } else {
+      note.classList.add('hidden');
+    }
     el('level-complete-continue-btn').textContent = data.continueLabel;
     spawnConfetti();
     window.showScreen('screen-level-complete');
@@ -1297,6 +1384,13 @@ const Attempt = (() => {
       btn.disabled = false;
       btn.textContent = btn.dataset.defaultLabel || btn.textContent;
     }
+    // Reset any leftover "ad failed" state from a previous bonus offer —
+    // this is a fresh prompt, so the freebie option (and its error line)
+    // must start hidden again until THIS ad attempt actually fails.
+    const freebieBtn = el('bonus-freebie-btn');
+    if (freebieBtn) freebieBtn.classList.add('hidden');
+    const errLine = el('bonus-error-line');
+    if (errLine) errLine.classList.add('hidden');
     window.showScreen('screen-bonus-prompt');
   }
 
@@ -1321,13 +1415,42 @@ const Attempt = (() => {
         btn.disabled = false;
         btn.textContent = btn.dataset.defaultLabel;
       }
-      await window.showAlert(`${describeAdError(err, 'bonus')} Bonus round skipped this time.`, 'error');
-      prepareLevel({ bonus: false });
+      // Stays on screen-bonus-prompt rather than auto-skipping straight
+      // away — the player now has 3 real options: retry the ad (the
+      // button above still works), play an honestly-labeled practice
+      // round (see acceptFreebieBonus()), or Skip (unchanged, below).
+      const errLine = el('bonus-error-line');
+      if (errLine) {
+        errLine.textContent = describeAdError(err, 'bonus');
+        errLine.classList.remove('hidden');
+      }
+      const freebieBtn = el('bonus-freebie-btn');
+      if (freebieBtn) freebieBtn.classList.remove('hidden');
     }
   }
 
   function skipBonus() {
     prepareLevel({ bonus: false });
+  }
+
+  // A bonus round played purely for its own sake after a real ad failed to
+  // load — never reported to score-replay at all (see pushLevelRecord()'s
+  // isBonus branch below and finishBonusLevel()): score-replay hard-rejects
+  // ANY level claiming isBonus:true without a matching verified ad
+  // completion, and unlike the life-extension freebie's elapsed-time clamp,
+  // there's no equivalent "honest ceiling" to clamp a bonus round's score
+  // down to — a bonus board's points either come from a real, SSV-verified
+  // entry or they don't count at all. Bonus rounds don't advance a.slotIndex
+  // either way (see beginLevel()'s comment), so simply never pushing a
+  // payload record for this round is completely safe: score-replay never
+  // even sees it, and the next regular level's slot sequence is unaffected,
+  // exactly as if the player had used the existing Skip button instead.
+  function acceptFreebieBonus() {
+    const errLine = el('bonus-error-line');
+    if (errLine) errLine.classList.add('hidden');
+    const freebieBtn = el('bonus-freebie-btn');
+    if (freebieBtn) freebieBtn.classList.add('hidden');
+    prepareLevel({ bonus: true, freebie: true });
   }
 
   // ---- Reveal screen ----
@@ -1556,9 +1679,11 @@ const Attempt = (() => {
   }
 
   function renderReveal() {
-    el('reveal-eyebrow').textContent = a.isBonusLevel ? 'Optional Bonus' : 'Theme Reveal';
+    el('reveal-eyebrow').textContent = a.isFreebieBonus ? 'Practice bonus (not counted)' : a.isBonusLevel ? 'Optional Bonus' : 'Theme Reveal';
     el('reveal-title').textContent = a.isBonusLevel
-      ? 'Bonus round'
+      ? a.isFreebieBonus
+        ? 'Practice round'
+        : 'Bonus round'
       : `Level ${SLOT_LETTERS[a.slotIndex]} — ${a.levelThemeName}`;
     const emojiGrid = el('reveal-emojis');
     emojiGrid.innerHTML = '';
@@ -1568,9 +1693,11 @@ const Attempt = (() => {
       emojiGrid.appendChild(span);
     });
     el('reveal-theme-name').textContent = a.levelThemeName;
-    el('reveal-sub').textContent = a.isBonusLevel
-      ? `${BONUS_SECONDS} seconds · no lives · mix of your last 3 themes`
-      : `Clear ${a.levelMovesTarget} moves in ${LEVEL_SECONDS} seconds.`;
+    el('reveal-sub').textContent = a.isFreebieBonus
+      ? `${BONUS_SECONDS} seconds · no lives · for fun only — points here won't count toward your score`
+      : a.isBonusLevel
+        ? `${BONUS_SECONDS} seconds · no lives · mix of your last 3 themes`
+        : `Clear ${a.levelMovesTarget} moves in ${LEVEL_SECONDS} seconds.`;
   }
 
   function renderBoard() {
@@ -1600,7 +1727,7 @@ const Attempt = (() => {
 
   function renderThemeBanner() {
     el('theme-banner-icon').textContent = a.levelIcon;
-    el('theme-banner-level').textContent = a.isBonusLevel ? 'Bonus round' : `Level ${SLOT_LETTERS[a.slotIndex]}`;
+    el('theme-banner-level').textContent = a.isFreebieBonus ? 'Practice round' : a.isBonusLevel ? 'Bonus round' : `Level ${SLOT_LETTERS[a.slotIndex]}`;
     el('theme-banner-name').textContent = a.levelThemeName;
   }
 
@@ -1666,6 +1793,18 @@ const Attempt = (() => {
     if (stopB) stopB.setAttribute('offset', pct);
   }
 
+  // The ad heart's "full" color: gold for a real, SSV-verified ad, grey for
+  // an honestly-labeled freebie (see offerAdLife()'s freebie branch) — the
+  // two are mutually exclusive per level, so one slot/color at a time is
+  // enough; no need for a separate 5th heart.
+  function setHeartAdColor(isFreebie) {
+    const color = isFreebie ? '#a39fb8' : '#f5b942';
+    const midB = document.getElementById('heart-ad-mid-b');
+    const full = document.getElementById('heart-ad-full');
+    if (midB) midB.setAttribute('stop-color', color);
+    if (full) full.setAttribute('stop-color', color);
+  }
+
   function renderHearts(remainingMs) {
     if (!a) return;
     const showHearts = !a.isBonusLevel;
@@ -1683,7 +1822,8 @@ const Attempt = (() => {
     // The active heart's own key, so the pulse only ever lands on whichever
     // heart actually corresponds to the segment currently running — never
     // more than one heart pulsing at once.
-    const activeKey = a.adLifeUsedThisLevel ? 'ad' : a.livesUsedInRun < STARTING_LIVES ? String(a.livesUsedInRun) : null;
+    const activeKey =
+      a.adLifeUsedThisLevel || a.freebieUsedThisLevel ? 'ad' : a.livesUsedInRun < STARTING_LIVES ? String(a.livesUsedInRun) : null;
 
     for (let i = 0; i < STARTING_LIVES; i++) {
       let frac;
@@ -1695,7 +1835,7 @@ const Attempt = (() => {
     }
 
     const adHeart = el('heart-ad');
-    if (a.adLifeUsedThisLevel) {
+    if (a.adLifeUsedThisLevel || a.freebieUsedThisLevel) {
       adHeart.classList.remove('hidden');
       // The ad heart only ever exists for the one segment its own use
       // granted — nothing later reuses this slot, so the current
@@ -1785,6 +1925,7 @@ const Attempt = (() => {
     confirmReveal,
     acceptBonus,
     skipBonus,
+    acceptFreebieBonus,
     continueAfterLevelComplete,
     retrySubmitAttempt,
     tryResume,
