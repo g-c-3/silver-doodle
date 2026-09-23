@@ -208,11 +208,16 @@
               </svg>
               <svg class="heart-svg heart-ad hidden" id="heart-ad" viewBox="0 0 24 24" aria-hidden="true">
                 <defs>
+                  <!-- Gold by default (a verified, SSV-confirmed ad); recolored
+                       grey by attempt.js's setHeartAdColor() when this segment
+                       is a freebie instead — see offerAdLife()'s freebie
+                       branch. Never both in the same level: the two are
+                       mutually exclusive by construction. -->
                   <linearGradient id="heart-grad-ad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stop-color="#f2f0fa" />
                     <stop id="heart-ad-mid-a" offset="0%" stop-color="#f2f0fa" />
                     <stop id="heart-ad-mid-b" offset="0%" stop-color="#f5b942" />
-                    <stop offset="100%" stop-color="#f5b942" />
+                    <stop id="heart-ad-full" offset="100%" stop-color="#f5b942" />
                   </linearGradient>
                 </defs>
                 <path fill="url(#heart-grad-ad)" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
@@ -263,6 +268,7 @@
           <span class="stat-val" id="lc-lives"></span>
         </div>
       </div>
+      <p class="muted hidden" id="level-complete-note"></p>
       <button id="level-complete-continue-btn" type="button" class="primary"></button>
     </div>
   </section>
@@ -278,7 +284,15 @@
       <h1 class="bonus-title">Free points, <span class="accent-text">zero risk</span></h1>
       <p class="muted bonus-copy">No lives on the line here — every point you score gets added straight to your total. Watch a quick ad to jump in, or skip ahead to the next level.</p>
       <button id="bonus-play-btn" type="button" class="primary">🎬 Watch ad &amp; play for bonus points</button>
+      <!-- Shown only after acceptBonus()'s ad attempt actually fails — see
+           attempt.js's acceptFreebieBonus(). Clearly labeled: unlike the
+           life-extension freebie, a bonus round's points can never be
+           reported to score-replay without a verified ad (it hard-rejects
+           any isBonus:true level otherwise), so this one is never submitted
+           at all — practice only, explicitly not added to the running score. -->
+      <button id="bonus-freebie-btn" type="button" class="secondary hidden">🎁 Play a practice round instead (won't count)</button>
       <button id="bonus-skip-btn" type="button" class="link">Skip</button>
+      <p class="muted bonus-error-line hidden" id="bonus-error-line"></p>
     </div>
   </section>
 
