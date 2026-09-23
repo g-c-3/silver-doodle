@@ -4,6 +4,20 @@ Most recent entry first.
 
 ---
 
+**2026-09-23 — Honestly-labeled ad-failure freebies (life extension + bonus round), score-integrity-safe**
+
+Requested after a screenshot showed the real ad-failure state (AdMob account still pending approval → "Account not approved yet" → only "Give up" available). First request (auto-grant the reward via a fake "demo ad" whenever the real one fails) was declined — explained why: an AdMob-policy risk while an account is actively in the approval queue, and functionally identical to a client-reported "ad watched" flag, which is exactly what SSV verification exists to rule out. Offered an alternative instead: an explicit, honestly-labeled freebie, flagged so it can't quietly pollute the leaderboard. Asked directly whether that would affect score saving — read `score-replay/index.ts` before answering, which surfaced the real constraint the whole design had to work around: `adLifeUsed: true` (or `isBonus: true`) without a matching verified-ad row doesn't just skip a bonus, it `fail()`s the *entire attempt submission*. Reusing either existing flag for an unverified freebie would have been strictly worse than doing nothing.
+
+**Built, for the "out of lives" (life-extension) case:** `offerAdLife()` gained a third button, "Continue anyway (+60s, no ad)", revealed only once a real ad attempt has actually failed. `handleTimeout()`'s gate now checks `freebieUsedThisLevel` alongside `adLifeUsedThisLevel` (one-shot, same as the real ad). `pushLevelRecord()` clamps that level's `elapsedMsAtEnd` down to its own honest (non-freebie) budget when the freebie was used — traced through `score-replay.ts`'s exact `budgetMs`/`leftoverMs` formulas to confirm this always yields exactly 0 time bonus for that level (never a partial/inconsistent amount), and updated `finishRegularLevel()`'s client-side display to show 0 too, so the level-complete screen never shows a bonus that later silently disappears once the server confirms. The freebie reuses the existing 4th "ad heart" HUD slot, recolored grey (`setHeartAdColor()`) rather than gold, to stay visually honest about what it is.
+
+**Built, for the bonus-round-entry case:** `acceptBonus()`'s ad-failure catch no longer auto-skips with an alert — `screen-bonus-prompt` reveals a "Play a practice round instead (won't count)" button. Unlike the life-extension case, there's no "honest ceiling" a bonus round's score could be clamped to (it's either verified or it isn't), so `acceptFreebieBonus()`/`finishBonusLevel()` simply never call `pushLevelRecord()` for it at all — confirmed via both `beginLevel()`'s existing comment and `score-replay.ts`'s own `if (!lvl.isBonus) slotIndex++` that bonus rounds never advance the slot sequence, so omitting the record entirely is exactly as safe as the pre-existing Skip button. The reveal screen, theme banner, and level-complete screen all label it "Practice round" before and after, so there's no ambiguity about whether it counts.
+
+**Not touched:** `game-engine.js`, `score-replay/index.ts`, `admob-ssv/index.ts` — this changes what the client offers and reports on ad failure, never how score-replay verifies or scores anything. Both flags (`freebieUsedThisLevel`, `isFreebieBonus`) were added to `persistAttempt()`/`resumeAttempt()` so a mid-freebie reload/force-close resumes correctly instead of misreconstructing a freebie as a real (unverified) ad-life or bonus round.
+
+**Next session start point:** device check once the account approves — confirm a REAL ad success still works end to end (not just the freebie path, which was the only one testable this session since ads are currently all failing), and play through both freebie paths once to confirm the level-complete/summary numbers match what the server actually returns. Every other standing Phase 12 item is untouched.
+
+---
+
 **2026-09-22 (hearts pulse + budget cut) — Pulsing hearts in the last 10s; free playtime before an ad cut from 4 minutes to 3**
 
 Same session, continued. Two requests:
