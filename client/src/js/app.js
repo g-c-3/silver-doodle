@@ -310,11 +310,10 @@ document.getElementById('reveal-start-btn').addEventListener('click', () => {
 });
 
 document.getElementById('bonus-play-btn').addEventListener('click', () => {
+  // acceptBonus() itself checks the button's data-mode and routes to the
+  // freebie action when the ad has already failed this prompt — see
+  // attempt.js (2026-09-23; this replaced a separate freebie button).
   Attempt.acceptBonus();
-});
-
-document.getElementById('bonus-freebie-btn').addEventListener('click', () => {
-  Attempt.acceptFreebieBonus();
 });
 
 document.getElementById('level-complete-continue-btn').addEventListener('click', () => {

@@ -263,7 +263,6 @@ const Attempt = (() => {
     a.isFreebieBonus = !!opts.freebie; // practice-only bonus round — see acceptFreebieBonus()
     a.adLifeUsedThisLevel = false;
     a.freebieUsedThisLevel = false;
-    setHeartAdColor(false); // reset to the default gold (verified-ad) tone; hidden either way until earned
 
     if (a.isBonusLevel) {
       const pickRng = GameEngine.makeRng(`${a.gameDefinitionId}:bonus:${a.slotIndex}:pick`);
@@ -621,7 +620,6 @@ const Attempt = (() => {
     a.isFreebieBonus = saved.isFreebieBonus;
     a.adLifeUsedThisLevel = saved.adLifeUsedThisLevel;
     a.freebieUsedThisLevel = saved.freebieUsedThisLevel;
-    if (a.adLifeUsedThisLevel || a.freebieUsedThisLevel) setHeartAdColor(!!a.freebieUsedThisLevel);
 
     // Re-derives this level's theme/emoji/target metadata exactly the way
     // prepareLevel() would — deterministic from gameDefinitionId/slotIndex/
@@ -902,43 +900,43 @@ const Attempt = (() => {
     p.textContent = `Out of lives for this attempt. Watch an ad for +${LIFE_EXTENSION_SECONDS}s on this level, or give up?`;
     box.appendChild(p);
 
-    const adBtn = document.createElement('button');
-    adBtn.className = 'secondary';
-    adBtn.textContent = 'Watch ad for extra time';
-
-    // Revealed only once a real ad attempt has actually failed below —
-    // never offered as a first option. Grants the same +60s a verified ad
-    // would, but is NEVER reported as adLifeUsed in the score-replay
-    // payload (an unverified claim there gets the WHOLE attempt rejected,
-    // not just this level — see the ad_verifications check in
-    // score-replay/index.ts). Instead pushLevelRecord() clamps this
-    // level's own elapsedMsAtEnd down to what it could honestly claim
-    // without the freebie, so the level's real move-based score still
-    // submits fine — only its own time bonus is what's sacrificed. See
-    // docs/DECISIONS.md.
-    const freebieBtn = document.createElement('button');
-    freebieBtn.className = 'secondary';
-    freebieBtn.textContent = `Continue anyway (+${LIFE_EXTENSION_SECONDS}s, no ad)`;
-    freebieBtn.style.display = 'none';
-    freebieBtn.addEventListener('click', () => {
-      a.freebieUsedThisLevel = true;
-      a.levelElapsedBaseMs += a.currentSegmentMs;
-      a.currentSegmentMs = LIFE_EXTENSION_SECONDS * 1000;
-      setMessage('');
-      showToast(`🎁 Free life — +${LIFE_EXTENSION_SECONDS}s (ads unavailable — won't count toward this level's time bonus)`);
-      setHeartAdColor(true); // grey, not gold — visually distinct from a verified ad
-      a.locked = false;
-      extendTimer(LIFE_EXTENSION_SECONDS);
-      renderHud();
-    });
+    // One button doing double duty rather than two separate ones: starts
+    // as the ad action; if the ad actually fails, it relabels itself to
+    // the honestly-labeled freebie action instead of leaving a second
+    // "Watch ad" retry sitting next to it — 2026-09-23, in response to the
+    // 2-button version being confusing. actionBtn.dataset.mode tracks
+    // which behavior the next click should run.
+    const actionBtn = document.createElement('button');
+    actionBtn.className = 'secondary';
+    actionBtn.textContent = 'Watch ad for extra time';
+    actionBtn.dataset.mode = 'ad';
 
     const errorLine = document.createElement('p');
     errorLine.className = 'muted';
     errorLine.style.display = 'none';
 
-    adBtn.addEventListener('click', async () => {
-      adBtn.disabled = true;
-      adBtn.textContent = 'Loading ad…';
+    function grantFreebie() {
+      // Grants the same +60s a verified ad would, but is NEVER reported as
+      // adLifeUsed in the score-replay payload (an unverified claim there
+      // gets the WHOLE attempt rejected, not just this level — see the
+      // ad_verifications check in score-replay/index.ts). Instead
+      // pushLevelRecord() clamps this level's own elapsedMsAtEnd down to
+      // what it could honestly claim without the freebie, so the level's
+      // real move-based score still submits fine — only its own time
+      // bonus is what's sacrificed. See docs/DECISIONS.md.
+      a.freebieUsedThisLevel = true;
+      a.levelElapsedBaseMs += a.currentSegmentMs;
+      a.currentSegmentMs = LIFE_EXTENSION_SECONDS * 1000;
+      setMessage('');
+      showToast(`🎁 Free life — +${LIFE_EXTENSION_SECONDS}s (ads unavailable — won't count toward this level's time bonus)`);
+      a.locked = false;
+      extendTimer(LIFE_EXTENSION_SECONDS);
+      renderHud();
+    }
+
+    async function tryAd() {
+      actionBtn.disabled = true;
+      actionBtn.textContent = 'Loading ad…';
       errorLine.style.display = 'none';
       try {
         await playRewardedAd('life');
@@ -962,20 +960,27 @@ const Attempt = (() => {
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('Rewarded ad (life) failed:', err);
-        adBtn.disabled = false;
-        adBtn.textContent = 'Watch ad for extra time';
         // Surfaced on-screen, not just console.error — there's no way to
         // check device logs without a terminal, so the actual native
         // AdMob error text (e.g. "No fill.", the most common cause on a
         // new/sideloaded ad unit) needs to reach the player directly.
         errorLine.textContent = describeAdError(err, 'life');
         errorLine.style.display = '';
-        // Ads aren't available (this failure, or any prior one this
-        // level) — offer the honestly-labeled freebie instead of leaving
-        // "give up" as the only way forward.
-        freebieBtn.style.display = '';
+        // No automatic retry — the SAME button now grants the freebie on
+        // its next tap instead of trying the ad again.
+        actionBtn.disabled = false;
+        actionBtn.textContent = `Continue anyway (+${LIFE_EXTENSION_SECONDS}s, no ad)`;
+        actionBtn.dataset.mode = 'freebie';
         // a.locked stays true — the board underneath stays non-interactive
         // until the player picks an option, same as the original lock.
+      }
+    }
+
+    actionBtn.addEventListener('click', () => {
+      if (actionBtn.dataset.mode === 'freebie') {
+        grantFreebie();
+      } else {
+        tryAd();
       }
     });
 
@@ -984,8 +989,7 @@ const Attempt = (() => {
     giveUpBtn.textContent = 'Give up';
     giveUpBtn.addEventListener('click', () => failAttempt());
 
-    box.appendChild(adBtn);
-    box.appendChild(freebieBtn);
+    box.appendChild(actionBtn);
     box.appendChild(giveUpBtn);
     box.appendChild(errorLine);
   }
@@ -1383,12 +1387,11 @@ const Attempt = (() => {
     if (btn) {
       btn.disabled = false;
       btn.textContent = btn.dataset.defaultLabel || btn.textContent;
+      // Reset any leftover "ad failed" state from a previous bonus offer —
+      // this is a fresh prompt, so the button starts back in 'ad' mode
+      // until THIS ad attempt actually fails (see acceptBonus() below).
+      btn.dataset.mode = 'ad';
     }
-    // Reset any leftover "ad failed" state from a previous bonus offer —
-    // this is a fresh prompt, so the freebie option (and its error line)
-    // must start hidden again until THIS ad attempt actually fails.
-    const freebieBtn = el('bonus-freebie-btn');
-    if (freebieBtn) freebieBtn.classList.add('hidden');
     const errLine = el('bonus-error-line');
     if (errLine) errLine.classList.add('hidden');
     window.showScreen('screen-bonus-prompt');
@@ -1396,6 +1399,13 @@ const Attempt = (() => {
 
   async function acceptBonus() {
     const btn = el('bonus-play-btn');
+    if (btn && btn.dataset.mode === 'freebie') {
+      // The button already flipped to freebie mode after a prior failure
+      // this prompt (see the catch branch below) — this tap grants it
+      // directly rather than trying the ad again.
+      acceptFreebieBonus();
+      return;
+    }
     if (btn) {
       if (!btn.dataset.defaultLabel) btn.dataset.defaultLabel = btn.textContent;
       btn.disabled = true;
@@ -1411,21 +1421,20 @@ const Attempt = (() => {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('Rewarded ad (bonus) failed:', err);
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = btn.dataset.defaultLabel;
-      }
-      // Stays on screen-bonus-prompt rather than auto-skipping straight
-      // away — the player now has 3 real options: retry the ad (the
-      // button above still works), play an honestly-labeled practice
-      // round (see acceptFreebieBonus()), or Skip (unchanged, below).
       const errLine = el('bonus-error-line');
       if (errLine) {
         errLine.textContent = describeAdError(err, 'bonus');
         errLine.classList.remove('hidden');
       }
-      const freebieBtn = el('bonus-freebie-btn');
-      if (freebieBtn) freebieBtn.classList.remove('hidden');
+      // No automatic retry — the SAME button now grants the honestly-
+      // labeled practice round on its next tap instead of trying the ad
+      // again (2026-09-23, matching offerAdLife()'s equivalent change).
+      // Skip (unchanged, its own button) is still there too.
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = `Play a practice round instead (won't count)`;
+        btn.dataset.mode = 'freebie';
+      }
     }
   }
 
@@ -1448,8 +1457,6 @@ const Attempt = (() => {
   function acceptFreebieBonus() {
     const errLine = el('bonus-error-line');
     if (errLine) errLine.classList.add('hidden');
-    const freebieBtn = el('bonus-freebie-btn');
-    if (freebieBtn) freebieBtn.classList.add('hidden');
     prepareLevel({ bonus: true, freebie: true });
   }
 
@@ -1765,15 +1772,17 @@ const Attempt = (() => {
   }
 
   // ---- Hearts (lives) drain visual ----
-  // 3 life hearts, plus a 4th "ad heart" hidden until an ad-life is used.
-  // Each one drains red -> white from the top down over the course of its
-  // own segment: heart 0 during the level's initial LEVEL_SECONDS, heart 1
-  // during the LIFE_EXTENSION_SECONDS the 1st life's use grants, heart 2
-  // during the LIFE_EXTENSION_SECONDS the 2nd life's use grants, and the ad
-  // heart during the LIFE_EXTENSION_SECONDS an ad-life grants. As of
-  // 2026-09-22, spending the 3rd (last) life no longer grants a segment of
-  // its own — see handleTimeout() — so all 3 hearts finishing fully white
-  // leads straight into the ad offer, with nothing left undrawn in between.
+  // Exactly 3 hearts — no separate slot for an ad/freebie extension.
+  // Heart 0 drains during the level's initial LEVEL_SECONDS, heart 1 during
+  // the LIFE_EXTENSION_SECONDS the 1st life's use grants, heart 2 during
+  // the LIFE_EXTENSION_SECONDS the 2nd life's use grants. Spending the 3rd
+  // (last) life no longer grants a segment of its own (see handleTimeout())
+  // — instead, if a real ad or the honestly-labeled freebie grants one,
+  // heart 2 refills back to full red and drains again for that segment,
+  // exactly the same animation as its first drain. 2026-09-23: this
+  // replaced an earlier design with a distinct 4th "ad heart" — simpler,
+  // and matches the request that any extra time should read as "the same
+  // heart, again" rather than a different, ad-specific indicator.
   // Whichever heart corresponds to the segment currently running also gets
   // a pulsing red outline once that segment's own remaining time drops to
   // <=10s, matching the countdown digits' own .timer-warn threshold.
@@ -1793,18 +1802,6 @@ const Attempt = (() => {
     if (stopB) stopB.setAttribute('offset', pct);
   }
 
-  // The ad heart's "full" color: gold for a real, SSV-verified ad, grey for
-  // an honestly-labeled freebie (see offerAdLife()'s freebie branch) — the
-  // two are mutually exclusive per level, so one slot/color at a time is
-  // enough; no need for a separate 5th heart.
-  function setHeartAdColor(isFreebie) {
-    const color = isFreebie ? '#a39fb8' : '#f5b942';
-    const midB = document.getElementById('heart-ad-mid-b');
-    const full = document.getElementById('heart-ad-full');
-    if (midB) midB.setAttribute('stop-color', color);
-    if (full) full.setAttribute('stop-color', color);
-  }
-
   function renderHearts(remainingMs) {
     if (!a) return;
     const showHearts = !a.isBonusLevel;
@@ -1819,32 +1816,36 @@ const Attempt = (() => {
     const segmentFraction =
       a.currentSegmentMs > 0 ? Math.max(0, Math.min(1, 1 - safeRemaining / a.currentSegmentMs)) : 0;
     const segmentIsUrgent = safeRemaining <= HEART_PULSE_THRESHOLD_MS;
-    // The active heart's own key, so the pulse only ever lands on whichever
-    // heart actually corresponds to the segment currently running — never
-    // more than one heart pulsing at once.
-    const activeKey =
-      a.adLifeUsedThisLevel || a.freebieUsedThisLevel ? 'ad' : a.livesUsedInRun < STARTING_LIVES ? String(a.livesUsedInRun) : null;
+
+    // Which heart corresponds to the segment currently running, if any.
+    // -1 covers the brief window after all 3 lives are spent but before an
+    // ad/freebie has actually been granted (the offer prompt is blocking
+    // play) — nothing is draining yet, so nothing should be mid-fill.
+    let activeIndex;
+    if (a.livesUsedInRun < STARTING_LIVES) {
+      activeIndex = a.livesUsedInRun;
+    } else if (a.adLifeUsedThisLevel || a.freebieUsedThisLevel) {
+      activeIndex = STARTING_LIVES - 1; // reuse + refill the last heart rather than a separate slot
+    } else {
+      activeIndex = -1;
+    }
 
     for (let i = 0; i < STARTING_LIVES; i++) {
       let frac;
-      if (i < a.livesUsedInRun) frac = 1; // already spent this run — fully white
-      else if (i === a.livesUsedInRun) frac = segmentFraction; // this heart's segment is the current one
-      else frac = 0; // not reached yet — fully red
+      if (i === activeIndex) {
+        // Currently draining — when this is the reused last heart, its own
+        // segmentFraction naturally starts back at 0 (full red) the moment
+        // the new segment begins, so "refill then drain again" falls out
+        // of the exact same math as a first drain, with nothing special
+        // to reset by hand.
+        frac = segmentFraction;
+      } else if (i < a.livesUsedInRun) {
+        frac = 1; // already spent this run, not currently the active one
+      } else {
+        frac = 0; // not reached yet
+      }
       setHeartDrain(String(i), frac);
-      el(`heart-${i}`).classList.toggle('heart-pulse', segmentIsUrgent && activeKey === String(i));
-    }
-
-    const adHeart = el('heart-ad');
-    if (a.adLifeUsedThisLevel || a.freebieUsedThisLevel) {
-      adHeart.classList.remove('hidden');
-      // The ad heart only ever exists for the one segment its own use
-      // granted — nothing later reuses this slot, so the current
-      // segment's fraction is always the right one here.
-      setHeartDrain('ad', segmentFraction);
-      adHeart.classList.toggle('heart-pulse', segmentIsUrgent && activeKey === 'ad');
-    } else {
-      adHeart.classList.add('hidden');
-      adHeart.classList.remove('heart-pulse');
+      el(`heart-${i}`).classList.toggle('heart-pulse', segmentIsUrgent && i === activeIndex);
     }
   }
 
@@ -1925,7 +1926,6 @@ const Attempt = (() => {
     confirmReveal,
     acceptBonus,
     skipBonus,
-    acceptFreebieBonus,
     continueAfterLevelComplete,
     retrySubmitAttempt,
     tryResume,
