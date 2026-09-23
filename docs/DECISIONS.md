@@ -2,6 +2,18 @@
 
 ADR-style log, most recent at bottom of each dated block. Written in impersonal third person; no attribution to individuals.
 
+## 2026-09-23 (refinement) — Freebie UI simplified: one button that relabels itself, one heart that refills, confirmed the score-integrity boundary explicitly
+
+Reviewed with real screenshots of the freebie flow in action (out of lives on Level B, AdMob still returning "Account not approved yet"). Three refinements, all UI-level — nothing about the underlying score-integrity design from the same day's earlier entry changed.
+
+**Confirmed explicitly: a real, successfully-played ad still banks a normal time bonus.** The elapsed-time clamp in `pushLevelRecord()` only fires when `freebieUsedThisLevel` is true; `adLifeUsed` (a real, SSV-verified ad) was never touched by it. Worth stating plainly since it's easy to misread the clamp as applying to all ad-life extensions rather than specifically the unverified freebie path.
+
+**One button, not two.** The original design showed "Watch ad for extra time" and "Continue anyway (+60s, no ad)" as separate, simultaneously-visible buttons once the ad failed — reported as confusing. Changed to a single button that starts as the ad action and, only after that ad attempt actually fails, relabels itself (text + a `data-mode` attribute) to the freebie action instead. No more automatic retry once it's failed once — the same tap that used to retry the ad now grants the freebie directly. Applied to both ad-failure points for consistency: `offerAdLife()`'s dynamically-built button, and the bonus prompt's static `bonus-play-btn` (which replaces the separate `bonus-freebie-btn` button from the same-day earlier entry).
+
+**One heart, refilled, not a 4th slot.** The 4th "ad heart" (gold for a real ad, grey for a freebie) is removed entirely. When an ad or freebie grants +60s after all 3 lives are spent, the 3rd heart refills to full red and drains again — same animation, same heart, rather than a separate indicator. This fell out of `renderHearts()`'s existing math almost for free: the "currently active heart index" now resolves back to index 2 (rather than a nonexistent index 3) whenever `adLifeUsedThisLevel`/`freebieUsedThisLevel` is true, and `segmentFraction` naturally starts back at 0 (full) the moment the new segment begins — no separate reset logic needed. `setHeartAdColor()` and its gold/grey distinction are gone along with the 4th heart, since there's no longer a second slot that needs to visually differ from the first three.
+
+**Hearts sized up slightly**, 17px -> 20px, on request ("a little bigger, not awkward").
+
 ## 2026-09-23 — Honestly-labeled freebies added for both ad-failure points; never reuses the ad-verified flag, never lets an unverified reward touch the leaderboard
 
 **The trigger.** With the AdMob account still in Google's approval queue, every real ad request currently fails ("Account not approved yet"), leaving "Give up" as the only way forward when out of lives, and a silent auto-skip when a bonus round's entry ad fails. Both were replaced with an honestly-labeled freebie: the same reward a real ad would grant, explicitly presented as not being an ad, offered only after a real ad attempt has actually failed (never as a first option).

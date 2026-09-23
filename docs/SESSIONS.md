@@ -4,6 +4,24 @@ Most recent entry first.
 
 ---
 
+**2026-09-23 (refinement) — Freebie UI simplified after real device screenshots: 1 button not 2, 1 heart refilled not 4 hearts**
+
+Same session, continued — 4 screenshots of the actual out-of-lives freebie flow on Level B prompted 3 changes plus a direct confirmation question.
+
+**Confirmed:** yes, a real successfully-watched ad still banks a normal time bonus — the elapsed-time clamp only ever applies to the no-ad freebie path (`freebieUsedThisLevel`), never to `adLifeUsed`.
+
+**Button merge:** the two separate buttons ("Watch ad for extra time" + "Continue anyway (+60s, no ad)") were replaced with one button that relabels itself after the ad actually fails, rather than showing both at once. Applied to both `offerAdLife()` (dynamically built) and the bonus prompt's `bonus-play-btn` (static HTML) for consistency — the separate `bonus-freebie-btn` element from earlier the same day is now removed; `acceptBonus()` checks the button's own `data-mode` and routes to `acceptFreebieBonus()` internally instead.
+
+**Heart merge:** the 4th "ad heart" (gold/grey) is removed entirely. `renderHearts()`'s active-heart-index logic now resolves back to index 2 (the last real heart) whenever an ad/freebie is active post-lives-exhaustion, rather than to a 4th slot — it refills to red and drains again, same heart, same animation. `setHeartAdColor()` is gone along with it (nothing left to recolor). Confirmed via a direct HTML/CSS balance check and a `node --check` pass that removing the element and all its JS references left nothing dangling.
+
+**Sizing:** hearts bumped 17px -> 20px on request ("a little bigger, not awkward").
+
+**Not touched:** the actual score-integrity design from the same day's earlier entry (the clamp formula, the no-payload-record-for-freebie-bonus approach) — this was UI-only.
+
+**Next session start point:** same as the prior entry — device check once AdMob approves, to confirm a real ad success still works end to end, plus this session's simplified single-button/single-heart UI reads correctly on a real device (screenshots so far are all from the failure path, since ads are still failing account-wide).
+
+---
+
 **2026-09-23 — Honestly-labeled ad-failure freebies (life extension + bonus round), score-integrity-safe**
 
 Requested after a screenshot showed the real ad-failure state (AdMob account still pending approval → "Account not approved yet" → only "Give up" available). First request (auto-grant the reward via a fake "demo ad" whenever the real one fails) was declined — explained why: an AdMob-policy risk while an account is actively in the approval queue, and functionally identical to a client-reported "ad watched" flag, which is exactly what SSV verification exists to rule out. Offered an alternative instead: an explicit, honestly-labeled freebie, flagged so it can't quietly pollute the leaderboard. Asked directly whether that would affect score saving — read `score-replay/index.ts` before answering, which surfaced the real constraint the whole design had to work around: `adLifeUsed: true` (or `isBonus: true`) without a matching verified-ad row doesn't just skip a bonus, it `fail()`s the *entire attempt submission*. Reusing either existing flag for an unverified freebie would have been strictly worse than doing nothing.
