@@ -752,6 +752,11 @@ const Attempt = (() => {
       // triggered this branch.
       extendTimer(LIFE_EXTENSION_SECONDS);
       renderHud();
+      // 2026-09-24 fix: a new segment beginning didn't reschedule the hint
+      // timer, same bug as offerAdLife()'s two branches below — see that
+      // function's header comment for the full explanation.
+      clearHints();
+      scheduleHintTimer();
       return;
     }
     if (a.livesUsedInRun < STARTING_LIVES) {
@@ -857,41 +862,52 @@ const Attempt = (() => {
   // SDK says needs to reach the screen directly rather than only going to
   // console.error().
   //
-  // "No ad available" (AdMob has nothing to serve — most commonly "No
-  // fill." or "Publisher data not found." on a new/low-traffic ad unit,
-  // not a code bug) gets its own honest, context-specific copy instead of
-  // a generic "ad failed". The underlying decision on an actual ad
-  // failure — decline the real ad, same as any other failure reason — does
-  // NOT change based on this distinction: granting the life/bonus for free
-  // on a claimed no-fill would let a modified client always claim "no ad
-  // available" to get free, unverified rewards, exactly the client-
-  // trusted-flag hole score-replay's ad_verifications check (Phase 10)
-  // exists to close. Wording is the only thing this improves — what
-  // actually happens next (the honestly-labeled freebie option, added
-  // 2026-09-23) is surfaced by offerAdLife()/acceptBonus() themselves, not
-  // baked into this string, so it doesn't need to change per context.
-  const NO_AD_AVAILABLE_PATTERNS = [/no fill/i, /publisher data not found/i, /ad request expired/i, /no.?ad.?to.?show/i];
-
+  // 2026-09-24: simplified to always show the same plain message
+  // regardless of the underlying failure reason — the previous version
+  // passed through the raw native AdMob error text (e.g. "Account not
+  // approved yet." plus a support.google.com link) for anything that
+  // wasn't a recognized no-fill pattern, which read as a confusing,
+  // unprofessional wall of text to a player who has no use for the
+  // technical reason. The full detail still goes to console.error() below
+  // for anyone who needs to debug it. "Closed before finishing" keeps its
+  // own distinct message since it's a genuinely different, accurate, and
+  // actionable case (the ad loaded fine — the player backed out) rather
+  // than an unavailability reason.
+  //
+  // The underlying decision on an actual ad failure — decline the real ad,
+  // same as any other failure reason — does not depend on which message is
+  // shown: granting the life/bonus for free on any claimed failure would
+  // let a modified client always report "failed" to get free, unverified
+  // rewards, exactly the client-trusted-flag hole score-replay's
+  // ad_verifications check (Phase 10) exists to close. What actually
+  // happens next (the honestly-labeled freebie option, added 2026-09-23)
+  // is surfaced by offerAdLife()/acceptBonus() themselves, not baked into
+  // this string.
   function describeAdError(err, context) {
     const msg = (err && err.message) || String(err || '');
     if (msg === 'Ad closed before finishing.') {
       return 'Ad was closed before it finished — try again.';
     }
-    if (NO_AD_AVAILABLE_PATTERNS.some((re) => re.test(msg))) {
-      return context === 'bonus' ? 'No ad available right now.' : 'No ad available right now.';
-    }
-    if (msg) {
-      return `Ad failed: ${msg}`;
-    }
-    return 'Ad failed to load or play.';
+    return 'Ad not available right now.';
   }
 
+  // Whenever this prompt grants more time (a real ad or the freebie), the
+  // hint timer needs a fresh schedule for the new segment — a bug found
+  // 2026-09-24: a.locked=true (set right below) means any hint timeout
+  // still pending from before this prompt appeared silently no-ops when it
+  // fires (showHints()'s own a.locked guard), and since showHints() never
+  // reschedules itself, that was the LAST hint for the rest of the level —
+  // none would ever appear again during the granted extra time, however
+  // long the player stayed idle. Both extension branches below now call
+  // clearHints()/scheduleHintTimer() explicitly, the same way beginLevel()
+  // already does for a brand new level.
   function offerAdLife() {
     // Blocks play until the player picks an option below — without this,
     // the board (still on screen-game underneath this prompt) stayed fully
     // tappable, letting moves/score keep changing while "out of lives" was
     // showing. See docs/DECISIONS.md's 2026-09-14 "offerAdLife lock" entry.
     a.locked = true;
+    clearHints(); // no stale glow sitting on a now-locked, non-interactive board
 
     const box = el('game-message');
     box.innerHTML = '';
@@ -932,6 +948,8 @@ const Attempt = (() => {
       a.locked = false;
       extendTimer(LIFE_EXTENSION_SECONDS);
       renderHud();
+      clearHints();
+      scheduleHintTimer();
     }
 
     async function tryAd() {
@@ -957,6 +975,8 @@ const Attempt = (() => {
         // led to this ad prompt.
         extendTimer(LIFE_EXTENSION_SECONDS);
         renderHud();
+        clearHints();
+        scheduleHintTimer();
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('Rewarded ad (life) failed:', err);
