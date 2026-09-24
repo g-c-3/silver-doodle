@@ -4,6 +4,20 @@ Most recent entry first.
 
 ---
 
+**2026-09-24 — Ad-failure message simplified; real bug found and fixed: hint timer never rescheduled after any timer extension**
+
+Two reports from real device screenshots (a regular level with the freebie already used, and the bonus-prompt failure state).
+
+**1. Ad-failure message.** `describeAdError()` was passing through raw native AdMob error text for anything that wasn't a recognized no-fill pattern — the screenshot showed `"Ad failed: Account not approved yet. <https://support.google.com/admob/answer/9905175#1>"` on screen, an unprofessional wall of text with a support URL a player has no use for. Simplified to always return "Ad not available right now." regardless of the specific underlying reason (full detail still goes to `console.error()`), keeping only the distinct "Ad was closed before it finished — try again." message, since that's a genuinely different, accurate, actionable case rather than an unavailability reason.
+
+**2. Hint timer bug — real, not specific to the freebie.** Reported as "the after 5 sec hint for move didn't appear" for a level where the life-extension freebie had been used. Traced the actual cause: `showHints()` guards on `a.locked` and, if it no-ops, never reschedules itself — it's a one-shot `setTimeout`, not a repeating interval. `offerAdLife()` sets `a.locked = true` for its whole prompt; if the hint timer was still pending when the prompt appeared, it fires mid-prompt, sees `a.locked === true`, and silently no-ops forever — no hint would appear again for the rest of the level, however long the granted extra time, since nothing ever called `scheduleHintTimer()` again. Checked all 3 `extendTimer()` call sites (the automatic 1st/2nd life extension in `handleTimeout()`, the real-ad success branch, and the freebie) and found the bug was present in all 3, not just the freebie path — none of them rescheduled the hint timer for the new segment, only `beginLevel()` (a brand new level) did. Fixed by adding `clearHints(); scheduleHintTimer();` after each of the 3, matching exactly what `beginLevel()` already does. Also added `clearHints()` at the very top of `offerAdLife()` so a hint already glowing when the prompt appears doesn't sit there uselessly behind the now-locked board.
+
+**Not touched:** `score-replay/index.ts`, `game-engine.js`, the score-integrity clamp logic from the prior two entries — this was a UI-copy fix and a client-side game-feel bug, nothing that touches scoring or verification.
+
+**Next session start point:** device check for both — confirm the ad-failure message reads as the plain "Ad not available right now." line, and confirm a hint now appears ~5s into an idle life-extension/freebie/ad segment (previously confirmed broken specifically for the freebie case; worth spot-checking the real-ad-success case too once AdMob approves, since that path was never actually exercised before this fix existed). Every other standing Phase 12 item is untouched.
+
+---
+
 **2026-09-23 (refinement) — Freebie UI simplified after real device screenshots: 1 button not 2, 1 heart refilled not 4 hearts**
 
 Same session, continued — 4 screenshots of the actual out-of-lives freebie flow on Level B prompted 3 changes plus a direct confirmation question.
