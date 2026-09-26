@@ -1028,6 +1028,7 @@ const Attempt = (() => {
     if (a.status === 'completed') return;
     stopTicking();
     clearHints();
+    hideToastImmediately(); // 2026-09-27: don't let a pending toast bleed into the summary screen
     a.totalScore += a.levelScore; // last-shown score is preserved, not dropped
     pushLevelRecord('failed');
     a.status = 'completed';
@@ -1242,6 +1243,7 @@ const Attempt = (() => {
     if (a.status === 'completed') return;
     stopTicking();
     clearHints();
+    hideToastImmediately(); // 2026-09-27: don't let a pending toast bleed into the next level
     // 2026-09-23: whenever the freebie was used this level, pushLevelRecord()
     // clamps elapsedMsAtEnd down to this level's honest (non-freebie)
     // budget — and since the freebie is only ever offered once that same
@@ -1289,6 +1291,7 @@ const Attempt = (() => {
     // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): see failAttempt().
     if (a.status === 'completed') return;
     clearHints();
+    hideToastImmediately(); // 2026-09-27: don't let a pending toast bleed into the next level
     if (a.isFreebieBonus) {
       // Practice round — never recorded, never added to the score/levels
       // count that reach score-replay. a.levelScore (the live "bonus
@@ -1703,6 +1706,30 @@ const Attempt = (() => {
     toastHideHandle = setTimeout(() => {
       t.classList.add('hidden');
     }, 5000);
+  }
+
+  // BUG FIX (2026-09-27, device report): the toast's 5s CSS animation only
+  // advances while #game-toast is actually rendered — an ancestor going
+  // display:none (any screen transition away from #screen-game) freezes
+  // the animation mid-frame rather than finishing it, even though
+  // toastHideHandle's real-time setTimeout keeps counting regardless of
+  // visibility. If a level (or bonus round, or the whole attempt) ends
+  // and the player reaches #screen-game again for a *later* level before
+  // that original 5s elapses, the still-not-yet-hidden toast resumes its
+  // frozen animation and becomes visible again — a stale message (e.g.
+  // "won't count toward this level's time bonus") from a previous level
+  // bleeding onto a new one. Reported: freebie used, level cleared inside
+  // ~1s, and the toast reappeared on the next level's board.
+  // Fix: explicitly kill any pending toast the instant #screen-game is
+  // left, at every exit path (finishRegularLevel/finishBonusLevel's
+  // level-complete screen, showBonusPrompt, finishAttempt/failAttempt's
+  // summary screen) — never rely on the real-time timeout alone to catch
+  // a paused-animation toast before the screen reappears.
+  function hideToastImmediately() {
+    clearTimeout(toastHideHandle);
+    const t = el('game-toast');
+    t.classList.add('hidden');
+    t.style.animation = 'none';
   }
 
   function renderReveal() {
