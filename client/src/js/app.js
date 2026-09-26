@@ -488,6 +488,19 @@ async function signOutToEmailScreen() {
   await Auth.signOut();
   state.session = null;
   state.profile = null;
+  // 2026-09-26 fix: hasRoutedOnce (below) is what stops supabase-js's
+  // spurious tab-focus-triggered SIGNED_IN re-fires from yanking the
+  // player away from an in-progress game — but it was never reset on
+  // sign-out, so a genuinely NEW sign-in later in the same page session
+  // (e.g. via the magic-link deep-link handoff while the app was still
+  // running) hit the "already routed once" branch and got silently
+  // absorbed into state.session with no screen change at all — stuck on
+  // whatever screen was showing, even though the session itself WAS
+  // correctly established (a cold restart's fresh INITIAL_SESSION check
+  // routed it fine, which is what made this so easy to miss). A deliberate
+  // sign-out is exactly the case where the *next* sign-in should route
+  // forward again, not be treated as a same-session refresh.
+  hasRoutedOnce = false;
   // Also called after account deletion (see profile-delete-account-btn
   // below) — either way, a shared device should never silently offer to
   // resume this player's in-progress board under whoever signs in next.
