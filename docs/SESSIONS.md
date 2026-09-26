@@ -4,6 +4,20 @@ Most recent entry first.
 
 ---
 
+**2026-09-26 — Real device sign-in bug found and fixed: a second sign-in in the same app session got silently swallowed**
+
+Reported from real device screenshots (email OTP flow, `gokulstrikes@yahoo.com`): tapping the confirmation link opens the GitHub Pages handoff page correctly (confirmed working, unrelated to this bug — see the private-repo/Pages discussion earlier this session), tapping "Open Match Emojis Daily" correctly brings the app to the foreground, but it then sits stuck rather than routing to Home — yet force-closing and reopening the app fresh immediately shows as signed in.
+
+**Cause:** `app.js`'s `Auth.onAuthStateChange` listener uses a `hasRoutedOnce` flag to stop supabase-js's own spurious tab-focus-triggered `SIGNED_IN` re-fires (same session, not a new login) from yanking the player out of an in-progress game — a deliberate, correct fix from 2026-09-15. But `hasRoutedOnce` was never reset on sign-out. Once it's `true` from any earlier sign-in in that same page session (the app hadn't been force-quit — same JS module state the whole time), a genuinely *new* sign-in later — including one completed via `deep-link.js`'s `appUrlOpen` handler while the app was already running — hits the "already routed, just refresh the token" branch instead of the "route to Home" branch. The session itself gets set correctly (`state.session = session`), which is exactly why a cold restart's fresh `INITIAL_SESSION` check (new page load = `hasRoutedOnce` reset to `false` again) shows it as signed in immediately — but the *already-running* app instance never got told to move its UI forward.
+
+**Fix:** `signOutToEmailScreen()` now resets `hasRoutedOnce = false`, since a deliberate sign-out is exactly the case where the next sign-in genuinely should route to Home again, not be treated as a same-session token refresh. Covers every sign-out path in the app (manual sign-out and post-account-deletion both route through this one function — confirmed by grepping every `Auth.signOut()` call site).
+
+**Not touched:** `deep-link.js`, `early-auth-handoff.js` — both read correctly; the PKCE exchange itself was never the problem, confirmed by the session being valid immediately on the next cold start. This was purely app.js's routing-suppression flag not accounting for an explicit sign-out.
+
+**Next session start point:** device re-test — sign in, sign out, sign back in (or repeat the exact repro: request a fresh OTP, tap the email link, tap through the GitHub Pages handoff) all within the same running app session, without force-quitting in between, and confirm it now routes to Home immediately rather than needing a restart.
+
+---
+
 **2026-09-24 — Ad-failure message simplified; real bug found and fixed: hint timer never rescheduled after any timer extension**
 
 Two reports from real device screenshots (a regular level with the freebie already used, and the bonus-prompt failure state).
