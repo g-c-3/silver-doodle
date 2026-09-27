@@ -312,6 +312,7 @@ const Attempt = (() => {
     a.movesMade = 0;
     a.levelScore = 0; // scratch total for this level only — committed to a.totalScore on completion
     a.locked = false;
+    a.awaitingLifeDecision = false; // 2026-09-27: see renderHearts() — must not carry over from a previous level
     // SECURITY/CORRECTNESS FIX (2026-09-19, §5.11): separate from a.locked
     // (which is also true during the ad-life prompt) — a.animating is true
     // ONLY during the 420ms move-resolution window in attemptSwapAt(),
@@ -669,6 +670,7 @@ const Attempt = (() => {
     a.locked = false;
     a.animating = false;
     a.pendingTimeout = false;
+    a.awaitingLifeDecision = false; // resuming is never mid-prompt — the prompt itself isn't persisted
 
     // Timer deadline set BEFORE renderHud() (which persists a fresh
     // snapshot as a side effect) so that save reads a real value instead of
@@ -907,6 +909,7 @@ const Attempt = (() => {
     // tappable, letting moves/score keep changing while "out of lives" was
     // showing. See docs/DECISIONS.md's 2026-09-14 "offerAdLife lock" entry.
     a.locked = true;
+    a.awaitingLifeDecision = true; // see renderHearts() — distinct from a.locked, which also fires on every move's brief animation lock
     clearHints(); // no stale glow sitting on a now-locked, non-interactive board
 
     const box = el('game-message');
@@ -946,6 +949,7 @@ const Attempt = (() => {
       setMessage('');
       showToast(`🎁 Free life — +${LIFE_EXTENSION_SECONDS}s (ads unavailable — won't count toward this level's time bonus)`);
       a.locked = false;
+      a.awaitingLifeDecision = false;
       extendTimer(LIFE_EXTENSION_SECONDS);
       renderHud();
       clearHints();
@@ -969,6 +973,7 @@ const Attempt = (() => {
         setMessage('');
         showToast(`🎬 Ad watched — +${LIFE_EXTENSION_SECONDS}s`);
         a.locked = false; // re-enable play now that the prompt is resolved
+        a.awaitingLifeDecision = false;
         // extendTimer() BEFORE renderHud(): same reasoning as beginLevel()'s
         // reordering above — renderHud() persists a.tickTarget, which must
         // already reflect the extension, not the just-expired deadline that
@@ -1868,10 +1873,24 @@ const Attempt = (() => {
     // -1 covers the brief window after all 3 lives are spent but before an
     // ad/freebie has actually been granted (the offer prompt is blocking
     // play) — nothing is draining yet, so nothing should be mid-fill.
+    //
+    // BUG FIX (2026-09-27, device report): this used to gate the "reuse
+    // heart 2" branch on a.adLifeUsedThisLevel / a.freebieUsedThisLevel —
+    // but those two flags are reset to false at the top of every level
+    // (prepareLevel()), while a.livesUsedInRun is shared across the WHOLE
+    // attempt and never resets. So once all 3 lives were spent in an
+    // earlier level, the NEXT level's own perfectly normal segment (no
+    // ad/freebie involved at all) fell into the else branch, activeIndex
+    // stayed -1, and every heart rendered as fully drained/empty for the
+    // whole level instead of heart 2 correctly showing full and draining.
+    // Fix: key off a.awaitingLifeDecision instead — true only during the
+    // actual blocking out-of-lives prompt (set/cleared in offerAdLife()),
+    // not the per-level ad/freebie flags, and not a.locked (which is also
+    // true, harmlessly, during every move's brief animation lock).
     let activeIndex;
     if (a.livesUsedInRun < STARTING_LIVES) {
       activeIndex = a.livesUsedInRun;
-    } else if (a.adLifeUsedThisLevel || a.freebieUsedThisLevel) {
+    } else if (!a.awaitingLifeDecision) {
       activeIndex = STARTING_LIVES - 1; // reuse + refill the last heart rather than a separate slot
     } else {
       activeIndex = -1;
