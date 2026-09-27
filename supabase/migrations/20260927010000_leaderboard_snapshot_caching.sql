@@ -1,10 +1,8 @@
 -- Match Emojis Daily — leaderboard snapshot caching
 --
--- REWRITTEN same-session, 2026-09-27, before this migration was ever run
--- against the live project (confirmed via ROADMAP.md — "run both new
--- migrations" was still an outstanding manual step) — so this edits the
--- migration file in place rather than layering a second migration on top
--- of one that never actually shipped. See docs/DECISIONS.md's second
+-- REWRITTEN same-session, 2026-09-27, on the mistaken assumption (see the
+-- CORRECTION further down — the assumption didn't hold) that this migration
+-- hadn't been run against the live project yet. See docs/DECISIONS.md's second
 -- 2026-09-27 entry for the full reasoning behind the rename below.
 --
 -- Account-holder request, verbatim: "Make the Daily as Today & Week as
@@ -52,8 +50,36 @@
 -- deliberately only ever returns top-N + the caller's row, and a snapshot
 -- refresh needs every row.
 
-create table public.leaderboard_snapshots (
-  scope             text not null check (scope in ('yesterday', 'all-time')),
+-- CORRECTED same session, after a real run against the live project: this
+-- file's `create table` statements assumed the tables didn't exist yet
+-- (per ROADMAP.md's outstanding-manual-steps list at the time), but the
+-- ORIGINAL pre-rename version of this migration had in fact already been
+-- run successfully by hand before the rename — so the tables already
+-- existed under the old 'daily'/'weekly' check constraint, and re-running
+-- this file as a plain `create table` failed with `42P07: relation
+-- "leaderboard_snapshots" already exists` (confirmed from the account
+-- holder's own screenshot of the error). Since Postgres stops a script at
+-- its first error, nothing past that line had applied — the tables and
+-- refresh_leaderboard_snapshot() were still in their OLD shape at the
+-- moment this was discovered. Rewritten below to be safely re-runnable
+-- from either starting point (a fresh database, or one that already ran
+-- the old pre-rename version) rather than assuming which one it'll meet —
+-- `create table if not exists`, an explicit `drop constraint if exists` +
+-- `add constraint` to force the CHECK to the new values regardless of
+-- what it was before, and a cleanup delete for any 'daily'/'weekly' rows
+-- an already-running old refresh cycle (or Cron Trigger — see
+-- docs/SESSIONS.md's correction on that) may have inserted, since those
+-- would now violate the new constraint anyway and are meaningless going
+-- forward. This is a change to THIS repo's practice specifically: prior
+-- migrations in this project were written as plain one-shot DDL on the
+-- (previously safe) assumption that "run the migration" always means a
+-- clean, single, tracked apply — that assumption no longer holds now that
+-- migrations are pasted by hand into the Supabase SQL Editor with no
+-- migration-tracking table behind them, so a file can be run more than
+-- once, or found already partially applied, without warning.
+
+create table if not exists public.leaderboard_snapshots (
+  scope             text not null,
   period_key        date not null, -- the frozen day for 'yesterday' / a fixed dummy date for all-time (ignored on read)
   generated_at      timestamptz not null default now(),
   next_refresh_at   timestamptz not null,
@@ -61,13 +87,27 @@ create table public.leaderboard_snapshots (
   primary key (scope, period_key)
 );
 
+-- Forces the CHECK to the new values whether this table was just created
+-- above (no constraint yet — the `drop ... if exists` is a no-op) or
+-- already existed under the old 'daily'/'weekly'/'all-time' constraint
+-- (Postgres's default auto-generated name for a column-level CHECK is
+-- `<table>_<column>_check`, which is what's being targeted here).
+alter table public.leaderboard_snapshots drop constraint if exists leaderboard_snapshots_scope_check;
+alter table public.leaderboard_snapshots add constraint leaderboard_snapshots_scope_check check (scope in ('yesterday', 'all-time'));
+
+-- Any row left over from an old-scope refresh cycle (a 'daily'/'weekly'
+-- row inserted before this rename shipped) would now violate the
+-- constraint just added anyway, and is meaningless under the new design —
+-- cleaned up explicitly rather than left to be silently unreadable.
+delete from public.leaderboard_snapshots where scope not in ('yesterday', 'all-time');
+
 alter table public.leaderboard_snapshots enable row level security;
 -- No policies — every read goes through the leaderboard Edge Function's
 -- service-role client (same as every stats/game-definition table already
 -- in this schema that isn't meant for direct client access).
 
-create table public.leaderboard_ranks (
-  scope                     text not null check (scope in ('yesterday', 'all-time')),
+create table if not exists public.leaderboard_ranks (
+  scope                     text not null,
   period_key                date not null,
   user_id                   uuid not null references public.users(id) on delete cascade,
   rnk                       bigint not null,
@@ -82,11 +122,15 @@ create table public.leaderboard_ranks (
   primary key (scope, period_key, user_id)
 );
 
+alter table public.leaderboard_ranks drop constraint if exists leaderboard_ranks_scope_check;
+alter table public.leaderboard_ranks add constraint leaderboard_ranks_scope_check check (scope in ('yesterday', 'all-time'));
+delete from public.leaderboard_ranks where scope not in ('yesterday', 'all-time');
+
 alter table public.leaderboard_ranks enable row level security;
 -- No policies — same reasoning as leaderboard_snapshots above.
 
 -- Fast top-N reads: "give me rank() order for this scope+period".
-create index idx_leaderboard_ranks_page on public.leaderboard_ranks (scope, period_key, rnk);
+create index if not exists idx_leaderboard_ranks_page on public.leaderboard_ranks (scope, period_key, rnk);
 
 create or replace function public.refresh_leaderboard_snapshot(
   p_scope text,
