@@ -24,12 +24,20 @@
 // player sees the same bonus board at the same point — see
 // docs/DECISIONS.md's 2026-09-14 Phase 6 entry for the reasoning.
 //
-// PHASE 8 (forfeit detection): startAttempt() also starts a ~20s heartbeat
-// (startHeartbeat()/sendHeartbeat()) for the lifetime of the attempt,
-// stopped on both terminal paths (failAttempt(), finishAttempt()). This only
-// proves liveness to the server — see server/functions/attempt-heartbeat/
-// index.ts and forfeit-stale-attempts/index.ts (the scheduled sweep that
-// actually marks a stale attempt forfeited) for the full mechanism.
+// PHASE 8 (forfeit detection): originally a ~20s client heartbeat
+// (startHeartbeat()/sendHeartbeat(), server/functions/attempt-heartbeat/)
+// plus a 5-minute cron sweep (forfeit-stale-attempts) marking a stale
+// in_progress attempt forfeited once its heartbeat fell too far behind.
+// REPLACED 2026-09-27 with event-driven forfeit detection — no periodic
+// write cost, and heartbeat never affected score integrity or the
+// leaderboard's tier-6 tiebreak either way (attempts_started is counted at
+// start-attempt time regardless; a forfeited attempt's score/time-bonus
+// were always just DB defaults). Now: starting a new attempt forfeits any
+// of that SAME user's other still-in_progress attempts, atomically, inside
+// start_attempt_slot (see supabase/migrations/20260927000000_event_driven_forfeit.sql);
+// anything left in_progress from a prior day gets forfeited by
+// generate-daily-games' existing once-daily cron run. See
+// docs/DECISIONS.md's 2026-09-27 entry for the full reasoning.
 //
 // PHASE 5 (score integrity): the attempt payload — {attemptId,
 // gameDefinitionId, levels[]}, one record per finished/failed level via
@@ -123,7 +131,6 @@ const Attempt = (() => {
   const LIFE_EXTENSION_SECONDS = 60;
   const SWIPE_THRESHOLD_PX = 18; // pointer movement below this is treated as a tap, not a swipe
   const HINT_IDLE_MS = 5000; // no successful move for this long -> highlight all available moves
-  const HEARTBEAT_INTERVAL_MS = 20000; // proves liveness to the Phase 8 forfeit-detection sweep
 
   // Client-side in-progress-attempt persistence (see docs/ROADMAP.md's
   // "Newly found gap, 2026-09-14" item and docs/DECISIONS.md's entry for
@@ -169,7 +176,6 @@ const Attempt = (() => {
   let pendingNext = null; // function to call from the level-complete screen's continue button
   let hintTimeoutHandle = null;
   let hintedCells = []; // "r,c" keys currently glowing — re-applied by renderBoard() on every re-render
-  let heartbeatHandle = null;
   let currentUserId = null; // set by startAttempt()/tryResume() — scopes the resume snapshot to its owner
 
   function el(id) {
@@ -254,7 +260,6 @@ const Attempt = (() => {
       submitAttempts: 0, // how many submitAttempt() calls have been made for this attempt so far
     };
     selectedCell = null;
-    startHeartbeat();
     prepareLevel({ bonus: false });
   }
 
@@ -415,51 +420,6 @@ const Attempt = (() => {
     });
   }
 
-  // ---- Heartbeat (Phase 8 forfeit detection) ----
-  // Proves this attempt is still actually being played, server-side. Never
-  // reports score/status — attempt-heartbeat only bumps a timestamp. See
-  // that function and forfeit-stale-attempts/index.ts (the scheduled sweep
-  // that actually marks a stale attempt forfeited) for the full mechanism.
-
-  function startHeartbeat() {
-    stopHeartbeat();
-    heartbeatHandle = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
-  }
-
-  function stopHeartbeat() {
-    clearInterval(heartbeatHandle);
-    heartbeatHandle = null;
-  }
-
-  async function sendHeartbeat() {
-    if (!a || !a.attemptId) return;
-    try {
-      const { data, error } = await window.db.functions.invoke('attempt-heartbeat', { body: { attemptId: a.attemptId } });
-      if (error) throw error;
-      if (data && data.forfeited) {
-        // The server-side sweep already gave up on this attempt before this
-        // heartbeat arrived (e.g. the app was backgrounded well past the
-        // timeout) — stop treating it as live rather than letting the
-        // player keep playing a run that can never be scored.
-        stopHeartbeat();
-        stopTicking();
-        clearHints();
-        await window.showAlert('This attempt timed out from inactivity and was forfeited.', 'warning');
-        // FIXED 2026-09-16: same stale-badge bug as summary-home-btn in
-        // app.js — this path also leaves screen-game without ever
-        // re-fetching the Home attempts-left count.
-        if (window.refreshAttemptsLeftToday) window.refreshAttemptsLeftToday();
-        window.showScreen('screen-home');
-      }
-    } catch (err) {
-      // Best-effort — a single missed heartbeat from a flaky connection
-      // isn't itself fatal; the server's timeout window has generous margin
-      // for exactly this. Just log and let the next interval try again.
-      // eslint-disable-next-line no-console
-      console.error('attempt-heartbeat failed:', err);
-    }
-  }
-
   // ---- Client-side resume ----
   // Mobile browsers reload a backgrounded tab routinely when memory is
   // reclaimed — without this, that reload dropped the player straight back
@@ -555,26 +515,33 @@ const Attempt = (() => {
     if (!saved || saved.userId !== userId) return false;
 
     // Confirm the attempt is still alive server-side before spending any
-    // effort reconstructing it locally — forfeit-stale-attempts (Phase 8)
-    // may already have given up on it while the tab was gone, and a stale
-    // local snapshot should never override that. Deliberately just as
-    // strict on a genuine network failure here as on a confirmed forfeit —
-    // resuming is only ever a convenience, and the attempt's real state
-    // still lives safely on the server either way, governed by the same
-    // heartbeat/forfeit mechanism as if this tab had simply stayed open.
-    let heartbeatOk = false;
+    // effort reconstructing it locally — trigger #1 (a different device/tab
+    // starting a new attempt) or trigger #2 (the day-end sweep) may already
+    // have forfeited it while this tab was gone, and a stale local
+    // snapshot should never override that. Deliberately just as strict on
+    // a genuine network failure here as on a confirmed forfeit — resuming
+    // is only ever a convenience, and the attempt's real state still lives
+    // safely on the server either way.
+    // 2026-09-27: replaced the attempt-heartbeat Edge Function call (Phase
+    // 8, removed — see file header) with a plain read of the row's own
+    // status, via the same attempts_select_own RLS policy Attempt History
+    // already relies on. No Edge Function invocation needed for a read
+    // this simple, and it's a single row-lookup either way.
+    let resumeOk = false;
     try {
-      const { data, error } = await window.db.functions.invoke('attempt-heartbeat', {
-        body: { attemptId: saved.attemptId },
-      });
+      const { data, error } = await window.db
+        .from('attempts')
+        .select('status')
+        .eq('id', saved.attemptId)
+        .maybeSingle();
       if (error) throw error;
-      heartbeatOk = !(data && data.forfeited);
+      resumeOk = !!data && data.status === 'in_progress';
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('Resume heartbeat check failed:', err);
-      heartbeatOk = false;
+      console.error('Resume status check failed:', err);
+      resumeOk = false;
     }
-    if (!heartbeatOk) {
+    if (!resumeOk) {
       clearPersistedAttempt();
       return false;
     }
@@ -691,7 +658,6 @@ const Attempt = (() => {
 
     clearHints();
     scheduleHintTimer();
-    startHeartbeat();
     window.showScreen('screen-game');
   }
 
@@ -1088,25 +1054,24 @@ const Attempt = (() => {
   // server's response is.
   //
   // FIXED 2026-09-16: a single failed network call here used to be
-  // unrecoverable data loss for a fully-played attempt. The old code set
-  // serverResult to a terminal "not validated" error with no retry path,
-  // AND finishAttempt()/failAttempt() had already called stopHeartbeat()
-  // before this ever ran — so the attempts row sat at status: 'in_progress'
-  // with a frozen last_heartbeat_at, and forfeit-stale-attempts (the 5-min
-  // scheduled sweep, server/functions/forfeit-stale-attempts/index.ts)
-  // would eventually flip it to 'forfeited'/score 0, discarding a
-  // completely legitimate playthrough. Two changes fix this together:
-  //   1. The heartbeat is no longer stopped until submitAttempt() actually
-  //      succeeds (see the two call sites above) — score-replay itself only
-  //      refuses an attempt whose status is already 'completed' (see its
-  //      own comment), not 'forfeited', so as long as last_heartbeat_at
-  //      keeps getting bumped the row never goes stale in the first place
-  //      and the sweep never touches it, however long submission takes.
-  //   2. This function now retries itself automatically a few times with
-  //      backoff before giving up, and exposes retrySubmitAttempt() for a
-  //      manual "Retry" button (renderSummary()) so the player can try
-  //      again themselves once they're back on a connection, at any point
-  //      after that.
+  // unrecoverable data loss for a fully-played attempt — the old code set
+  // serverResult to a terminal "not validated" error with no retry path.
+  // Fixed by retrying automatically a few times with backoff before giving
+  // up, and exposing retrySubmitAttempt() for a manual "Retry" button
+  // (renderSummary()) so the player can try again themselves once they're
+  // back on a connection, at any point after that.
+  //
+  // 2026-09-27: this retry window is also why removing the client
+  // heartbeat (file header) is safe even for an attempt that gets
+  // forfeited — e.g. by trigger #1 — WHILE a submission here is still
+  // retrying in the background (player bounces Home and starts their next
+  // attempt before this one's retries finish). score-replay's own
+  // LATE_FORFEIT_WINDOW_MS (45 min — server/functions/score-replay/
+  // index.ts) already accepts a legitimate late submission against a
+  // 'forfeited' row and flips it to 'completed' with the real score, same
+  // as it always did for the old heartbeat/5-min-sweep design. 45 minutes
+  // is enormously more than this function's ~19s worst-case automatic
+  // retry chain, so no score-integrity gap opens up here.
   const SUBMIT_RETRY_DELAYS_MS = [2000, 5000, 12000]; // 3 automatic retries after the first attempt
 
   async function submitAttempt() {
@@ -1123,7 +1088,6 @@ const Attempt = (() => {
       if (a.attemptId !== myAttemptId) return; // superseded — a new attempt started while this was in flight
       a.serverResult = data;
       a.submitting = false;
-      stopHeartbeat(); // only now — submission is confirmed persisted server-side
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`Score-replay submission failed (try ${a.submitAttempts}):`, err);
@@ -1152,7 +1116,6 @@ const Attempt = (() => {
           // Good news, not a failure — an earlier try likely succeeded
           // server-side but its response never made it back.
           a.serverResult = { valid: false, error: 'Already saved on the server — check History for your final score.', alreadySaved: true };
-          stopHeartbeat();
           if (el('screen-attempt-summary') && !el('screen-attempt-summary').classList.contains('hidden')) renderSummary();
           return;
         }
@@ -1172,7 +1135,6 @@ const Attempt = (() => {
             return;
           }
           a.serverResult = { valid: false, error: 'Your ad reward could not be confirmed in time. Tap Retry to check again.' };
-          stopHeartbeat();
           if (el('screen-attempt-summary') && !el('screen-attempt-summary').classList.contains('hidden')) renderSummary();
           return;
         }
@@ -1181,7 +1143,6 @@ const Attempt = (() => {
         // not retry (it would just fail identically), and end the
         // attempt's lifecycle same as a successful submission would.
         a.serverResult = { valid: false, error: structured.error, noRetry: true };
-        stopHeartbeat();
         if (el('screen-attempt-summary') && !el('screen-attempt-summary').classList.contains('hidden')) renderSummary();
         return;
       }
@@ -1198,8 +1159,8 @@ const Attempt = (() => {
         }, SUBMIT_RETRY_DELAYS_MS[retryIndex]);
         return;
       }
-      // Automatic retries exhausted — hand it to the player. The heartbeat
-      // is still running (see above), so nothing is lost by waiting; tapping
+      // Automatic retries exhausted — hand it to the player. Nothing is
+      // lost by waiting (LATE_FORFEIT_WINDOW_MS, see above) — tapping
       // Retry calls this same function again with no extra limit.
       a.serverResult = {
         valid: false,

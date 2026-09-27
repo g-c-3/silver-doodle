@@ -26,6 +26,14 @@
 // Follows the app's established convention: this module owns fetching +
 // rendering only. Static DOM wiring (Back button, calendar nav taps, the
 // day-panel Close button) lives in app.js, same as every other screen.
+//
+// 2026-09-27: today is excluded from both the tiles (best/least day) and
+// the calendar drill-down — its daily_stats row is still live (more
+// attempts could still happen today), so there's nothing settled to show
+// or cache yet; check the Attempts screen for today's own progress instead.
+// Every PAST day's attempts list, once fetched via openDay(), is cached in
+// localStorage permanently — it can never change again, so there's no
+// reason to ever re-read it from the server.
 
 const Stats = (function () {
   const IST_TIME_ZONE = 'Asia/Kolkata';
@@ -130,11 +138,17 @@ const Stats = (function () {
   }
 
   async function loadDailyRows() {
+    // 2026-09-27: today's own row is excluded — more attempts can still
+    // happen today, so its max_score isn't settled yet and could still
+    // change again before the day ends. Same "today isn't final yet"
+    // policy as the calendar's disabled-today cell above; today's best
+    // score (if any) shows up here as a normal, settled day from tomorrow.
     const { data, error } = await window.db
       .from('daily_stats')
       .select('stat_date, max_score')
       .eq('user_id', userId)
       .gt('attempts_completed', 0)
+      .lt('stat_date', todayIst())
       .order('stat_date', { ascending: true });
     if (error) {
       dailyRows = [];
@@ -193,7 +207,13 @@ const Stats = (function () {
       if (dateStr === today) cell.classList.add('cal-cell-today');
       if (dateStr === selectedDate) cell.classList.add('cal-cell-selected');
       cell.innerHTML = `<span>${day}</span>${played ? '<span class="cal-dot"></span>' : ''}`;
-      if (played) {
+      // 2026-09-27: today is never drillable here, played or not — its
+      // daily_stats row is still live (more attempts can still happen
+      // today, and this day's own "best/least day" standing could still
+      // change), so there's nothing settled yet to cache or show as final.
+      // Today's own progress belongs on the Attempts screen instead; this
+      // calendar shows it again, as a normal completed day, from tomorrow.
+      if (played && dateStr !== today) {
         cell.addEventListener('click', () => openDay(dateStr));
       } else {
         cell.disabled = true;
@@ -212,33 +232,37 @@ const Stats = (function () {
 
   // ---- Day drill-down ----
 
-  async function openDay(dateStr) {
-    selectedDate = dateStr;
-    renderCalendarGrid(); // re-render so the tapped cell shows as selected
-    const panel = el('stats-day-panel');
-    const list = el('stats-day-list');
-    panel.classList.remove('hidden');
-    el('stats-day-label').textContent = formatDayLabel(dateStr);
-    list.innerHTML = '<p class="muted">Loading…</p>';
+  // 2026-09-27: a PAST day's attempts list never changes once that day is
+  // over (today itself is excluded from drill-down entirely — see
+  // renderCalendarGrid() — so every dateStr reaching here is always
+  // already-settled), so once fetched it's cached permanently and never
+  // re-read from the server. Keyed by user id too, not just date, in case
+  // this device is ever signed into more than one account over its
+  // lifetime — localStorage is per-device/browser, not per-account.
+  function dayCacheKey(dateStr) {
+    return `stats_day_${userId}_${dateStr}`;
+  }
 
-    // Same start-of-day-in-IST window attempt-history/app.js already use for
-    // "today"'s attempts — here applied to an arbitrary calendar day instead.
-    // Matches record_attempt_start's own p_start_date scoping (Section 8), so
-    // this lines up with exactly which attempts made this day light up on
-    // the calendar in the first place.
-    const { startUtc, endUtc } = istDayBoundsUtc(dateStr);
-    const { data, error } = await window.db
-      .from('attempts')
-      .select('id, started_at, status, score, levels_reached')
-      .eq('user_id', userId)
-      .gte('started_at', startUtc)
-      .lte('started_at', endUtc)
-      .order('started_at', { ascending: true });
-
-    if (error) {
-      list.innerHTML = '<p class="error">Could not load that day.</p>';
-      return;
+  function readDayCache(dateStr) {
+    try {
+      const raw = localStorage.getItem(dayCacheKey(dateStr));
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null; // corrupt/unavailable storage — just refetch, no harm done
     }
+  }
+
+  function writeDayCache(dateStr, rows) {
+    try {
+      localStorage.setItem(dayCacheKey(dateStr), JSON.stringify(rows));
+    } catch {
+      // Storage full/unavailable (e.g. private browsing) — the day still
+      // rendered fine this time, it'll just re-fetch on the next visit.
+    }
+  }
+
+  function renderDayList(data) {
+    const list = el('stats-day-list');
     if (!data || data.length === 0) {
       list.innerHTML = '<p class="muted">No attempts found for this day.</p>';
       return;
@@ -261,6 +285,44 @@ const Stats = (function () {
       `;
       list.appendChild(div);
     });
+  }
+
+  async function openDay(dateStr) {
+    selectedDate = dateStr;
+    renderCalendarGrid(); // re-render so the tapped cell shows as selected
+    const panel = el('stats-day-panel');
+    const list = el('stats-day-list');
+    panel.classList.remove('hidden');
+    el('stats-day-label').textContent = formatDayLabel(dateStr);
+
+    const cached = readDayCache(dateStr);
+    if (cached) {
+      renderDayList(cached);
+      return; // served entirely from cache — no network read for an already-settled day
+    }
+
+    list.innerHTML = '<p class="muted">Loading…</p>';
+
+    // Same start-of-day-in-IST window attempt-history/app.js already use for
+    // "today"'s attempts — here applied to an arbitrary calendar day instead.
+    // Matches record_attempt_start's own p_start_date scoping (Section 8), so
+    // this lines up with exactly which attempts made this day light up on
+    // the calendar in the first place.
+    const { startUtc, endUtc } = istDayBoundsUtc(dateStr);
+    const { data, error } = await window.db
+      .from('attempts')
+      .select('id, started_at, status, score, levels_reached')
+      .eq('user_id', userId)
+      .gte('started_at', startUtc)
+      .lte('started_at', endUtc)
+      .order('started_at', { ascending: true });
+
+    if (error) {
+      list.innerHTML = '<p class="error">Could not load that day.</p>';
+      return; // deliberately NOT cached — a transient read failure shouldn't be remembered as "this day has no data"
+    }
+    writeDayCache(dateStr, data || []);
+    renderDayList(data);
   }
 
   function closeDay() {
