@@ -1,43 +1,29 @@
 // Match Emojis Daily — leaderboard Edge Function (Phase 7)
 //
-// Reads the daily_stats/weekly_stats/all_time_stats rows populated by
-// start-attempt's record_attempt_start and score-replay's
-// record_attempt_completion (see this session's migration:
-// supabase/migrations/20260914020000_phase7_stats_functions.sql), applies
-// the 7-tier cascade from docs/ARCHITECTURE.md Section 7, and returns a
-// ranked top-N list plus the caller's own rank and a breakdown of which
-// tier decided it.
+// REWRITTEN 2026-09-27: previously called get_leaderboard_page() live, on
+// every request — a full 7-tier rank() pass over the scope's entire stats
+// table, every single leaderboard screen open, from every player. Now
+// reads leaderboard_ranks/leaderboard_snapshots instead (supabase/
+// migrations/20260927010000_leaderboard_snapshot_caching.sql), populated
+// on a fixed refresh schedule (daily: every 3h; weekly/all-time: once a
+// day) rather than per-request — this function's job is now just cheap
+// indexed lookups: top N, the caller's own row, and (if the caller is
+// outside the top N) the row directly above them for decidingTier. See
+// docs/DECISIONS.md's 2026-09-27 entry for the full reasoning.
+//
+// get_leaderboard_page() itself (docs/ARCHITECTURE.md Section 7's 7-tier
+// cascade, supabase/migrations/20260919020000_phase12_leaderboard_scaling_fix.sql)
+// is kept as-is and used ONLY as a graceful fallback here — see
+// liveFallback() below — for the narrow case where a snapshot for the
+// requested scope/period doesn't exist yet (e.g. right after this feature
+// first deploys, before the first scheduled refresh has run for that
+// period). This fallback is expected to be rare in steady state, not the
+// normal path.
 //
 // Accepts POST { scope: 'daily' | 'weekly' | 'all-time', date?: string,
-// limit?: number }. `date` (YYYY-MM-DD, IST calendar date) only applies to
-// 'daily' and 'weekly' scopes — daily uses it directly, weekly resolves it
-// to that date's Monday-start week. Both default to "now, in IST" if
+// limit?: number } — contract unchanged from before this rewrite. `date`
+// only applies to 'daily'/'weekly'; both default to "now, in IST" if
 // omitted. `limit` defaults to 50, capped at 200.
-//
-// SECURITY FIX (2026-09-19, §5.9): the cascade used to be sorted here in
-// JS, over the ENTIRE scope table fetched via PostgREST — see
-// docs/DECISIONS.md's 2026-09-19 (later still) entry for why that broke at
-// scale (PostgREST's 1,000-row cap silently truncating the sort input,
-// and a display-name lookup that put every single user id into one
-// request URL). The cascade itself — same 7 tiers, same tie-break order,
-// same divide-by-zero handling for players with zero completed attempts —
-// now lives in the get_leaderboard_page() SQL function
-// (supabase/migrations/20260919020000_phase12_leaderboard_scaling_fix.sql)
-// so it runs once, in Postgres, over an indexed sort, and only the rows
-// this function actually needs (top N + the caller's own row) ever cross
-// the wire. The comparator/tier logic that used to live in this file
-// (TIERS, compareRows, average()) is gone — this file's job now is just to
-// call that RPC and shape its result into the same response JSON as
-// before, so nothing about the CLIENT'S contract with this function
-// changed.
-//
-// RANKING FOR PLAYERS WHO NEVER COMPLETED AN ATTEMPT: max_score defaults to
-// 0, so a player with attempts_started > 0 but attempts_completed === 0
-// still appears (tied at the bottom on tier 1 with anyone else at 0), but
-// their average tiers (2/4/5/7, NULL via NULLIF in SQL now rather than
-// undefined in JS) sort as the worst possible value for that tier's
-// direction via NULLS LAST — see the migration's own comment for why that
-// single rule covers both ASC and DESC tiers.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -49,33 +35,30 @@ const CORS_HEADERS = {
 
 type Scope = 'daily' | 'weekly' | 'all-time';
 
-// One row of get_leaderboard_page()'s result — every column is prefixed
-// out_* to dodge PL/pgSQL's "ambiguous column reference" error against the
-// source tables' own column names AND against the function's own OUT
-// parameters (RETURNS TABLE implicitly declares a PL/pgSQL variable per
-// column, so an unprefixed working name anywhere in the function body can
-// collide with its own output column — this bit the original migration
-// once already: 2026-09-21, see docs/DECISIONS.md).
+// Fixed sentinel period_key for the 'all-time' scope's single snapshot row
+// — MUST stay identical to generate-daily-games/index.ts's own constant of
+// the same name (see that file's comment for why this can't just be
+// "today"). Duplicated by hand, same convention as this codebase's other
+// small cross-file constants (e.g. the seeded RNG).
+const ALL_TIME_PERIOD_KEY = '2000-01-01';
+
+// One row of leaderboard_ranks — the persisted, already-computed shape.
+// Unprefixed column names now (no more out_* — that was only needed to
+// dodge PL/pgSQL's ambiguous-column-reference error inside a RETURNS TABLE
+// function; this is a plain table select, no such collision exists here).
 interface RankedRow {
-  out_user_id: string;
-  out_rnk: number;
-  out_max_score: number;
-  out_sum_score: number;
-  out_max_time_bonus_micros: number;
-  out_sum_time_bonus_micros: number;
-  out_sum_lives_used: number;
-  out_sum_levels_played: number;
-  out_attempts_started: number;
-  out_attempts_completed: number;
-  total_players: number;
-  is_caller: boolean;
+  user_id: string;
+  rnk: number;
+  max_score: number;
+  sum_score: number;
+  max_time_bonus_micros: number;
+  sum_time_bonus_micros: number;
+  sum_lives_used: number;
+  sum_levels_played: number;
+  attempts_started: number;
+  attempts_completed: number;
 }
 
-// Tier names only — used purely for the human-readable decidingTierName in
-// the response. The actual comparison logic lives in the SQL function now;
-// this list's ORDER must still match it exactly, since decidingTierIndex()
-// below re-derives which tier decided a tie by comparing the same raw
-// values the SQL function already ranked by.
 const TIER_NAMES = [
   'Highest single-attempt score',
   'Average score',
@@ -90,20 +73,18 @@ function average(sum: number, count: number): number | null {
   return count > 0 ? sum / count : null;
 }
 
-// First tier (1-indexed) at which two adjacent ranked rows actually
-// differ — i.e. what decided `row` not sharing `betterRow`'s rank. Only
-// ever called on the caller's row against the row directly above it (two
-// rows, not the whole table), so re-deriving the 7 tier values here in JS
-// is cheap and doesn't reintroduce the scaling problem this fix addresses.
+// Same purpose as before the rewrite: first tier (1-indexed) at which two
+// adjacent ranked rows actually differ. Only ever called on two rows, so
+// re-deriving the 7 tier values here in JS is cheap.
 function decidingTierIndex(row: RankedRow, betterRow: RankedRow): number {
   const tierValues = (r: RankedRow): (number | null)[] => [
-    r.out_max_score,
-    average(r.out_sum_score, r.out_attempts_completed),
-    r.out_max_time_bonus_micros,
-    average(r.out_sum_time_bonus_micros, r.out_attempts_completed),
-    average(r.out_sum_lives_used, r.out_attempts_completed),
-    r.out_attempts_started,
-    average(r.out_sum_levels_played, r.out_attempts_completed),
+    r.max_score,
+    average(r.sum_score, r.attempts_completed),
+    r.max_time_bonus_micros,
+    average(r.sum_time_bonus_micros, r.attempts_completed),
+    average(r.sum_lives_used, r.attempts_completed),
+    r.attempts_started,
+    average(r.sum_levels_played, r.attempts_completed),
   ];
   const a = tierValues(row);
   const b = tierValues(betterRow);
@@ -125,7 +106,7 @@ function istDateString(): string {
 }
 
 // Monday of the ISO week containing `dateStr` — matches the SQL side's
-// week_start_ist() (date_trunc('week', ...) is Monday-first by default).
+// weekly branch in refresh_leaderboard_snapshot().
 function mondayOfWeek(dateStr: string): string {
   const d = new Date(`${dateStr}T00:00:00Z`);
   const isoDay = d.getUTCDay() === 0 ? 7 : d.getUTCDay(); // Mon=1 .. Sun=7
@@ -139,16 +120,16 @@ function fail(error: string) {
 
 function buildEntry(row: RankedRow, displayName: string) {
   return {
-    rank: row.out_rnk,
-    userId: row.out_user_id,
+    rank: row.rnk,
+    userId: row.user_id,
     displayName,
-    score: row.out_max_score,
-    avgScore: row.out_attempts_completed > 0 ? Math.round(row.out_sum_score / row.out_attempts_completed) : null,
-    timeBonusMicros: row.out_max_time_bonus_micros,
-    avgTimeBonusMicros: row.out_attempts_completed > 0 ? Math.round(row.out_sum_time_bonus_micros / row.out_attempts_completed) : null,
-    avgLivesUsed: row.out_attempts_completed > 0 ? Number((row.out_sum_lives_used / row.out_attempts_completed).toFixed(2)) : null,
-    attemptsPlayed: row.out_attempts_started,
-    avgLevelsPlayed: row.out_attempts_completed > 0 ? Number((row.out_sum_levels_played / row.out_attempts_completed).toFixed(2)) : null,
+    score: row.max_score,
+    avgScore: row.attempts_completed > 0 ? Math.round(row.sum_score / row.attempts_completed) : null,
+    timeBonusMicros: row.max_time_bonus_micros,
+    avgTimeBonusMicros: row.attempts_completed > 0 ? Math.round(row.sum_time_bonus_micros / row.attempts_completed) : null,
+    avgLivesUsed: row.attempts_completed > 0 ? Number((row.sum_lives_used / row.attempts_completed).toFixed(2)) : null,
+    attemptsPlayed: row.attempts_started,
+    avgLevelsPlayed: row.attempts_completed > 0 ? Number((row.sum_levels_played / row.attempts_completed).toFixed(2)) : null,
   };
 }
 
@@ -199,7 +180,7 @@ Deno.serve(async (req: Request) => {
 
   const today = istDateString();
   let periodLabel: string;
-  let periodKey: string; // date sent to get_leaderboard_page; 'all-time' ignores it but the RPC signature still requires one
+  let periodKey: string;
 
   if (scope === 'daily') {
     periodKey = body.date ?? today;
@@ -208,69 +189,180 @@ Deno.serve(async (req: Request) => {
     periodKey = mondayOfWeek(body.date ?? today);
     periodLabel = periodKey;
   } else {
-    periodKey = today; // unused by the SQL function's 'all-time' branch, but the parameter is not nullable
+    periodKey = ALL_TIME_PERIOD_KEY; // the single fixed row — see the constant's own comment
     periodLabel = 'all-time';
   }
 
-  // SECURITY FIX (2026-09-19, §5.9): single RPC call replaces the old
-  // fetch-everything-then-sort-in-JS approach. get_leaderboard_page does
-  // the 7-tier ranking in SQL and returns ONLY the top `limit` rows plus
-  // the caller's own row (and, if the caller is outside the top `limit`,
-  // the row directly above them, so decidingTier stays accurate) — never
-  // the whole scope table.
-  const rankedResult = await admin.rpc('get_leaderboard_page', {
-    p_scope: scope,
-    p_period_key: periodKey,
-    p_caller_id: user.id,
-    p_limit: limit,
-  });
-  if (rankedResult.error) return new Response(JSON.stringify(fail(rankedResult.error.message)), { status: 500, headers: CORS_HEADERS });
-  const rankedRows = (rankedResult.data ?? []) as RankedRow[];
+  const snapshot = await admin
+    .from('leaderboard_snapshots')
+    .select('generated_at, next_refresh_at, total_players')
+    .eq('scope', scope)
+    .eq('period_key', periodKey)
+    .maybeSingle();
+  if (snapshot.error) return new Response(JSON.stringify(fail(snapshot.error.message)), { status: 500, headers: CORS_HEADERS });
 
-  if (rankedRows.length === 0) {
+  if (!snapshot.data) {
+    // No refresh has run yet for this exact scope/period — expected to be
+    // rare (a brand-new period right as this feature first deploys, or a
+    // manually-requested past date old enough to predate this feature).
+    // Falls back to computing live, this one time, rather than showing the
+    // player an empty leaderboard. Does not write a snapshot itself — the
+    // scheduled refresh is still the only writer, keeping this fallback's
+    // own read-cost bounded to just this one request.
+    return await liveFallback(admin, scope, periodKey, periodLabel, user.id, limit);
+  }
+
+  const rankedResult = await admin
+    .from('leaderboard_ranks')
+    .select('user_id, rnk, max_score, sum_score, max_time_bonus_micros, sum_time_bonus_micros, sum_lives_used, sum_levels_played, attempts_started, attempts_completed')
+    .eq('scope', scope)
+    .eq('period_key', periodKey)
+    .order('rnk', { ascending: true })
+    .limit(limit);
+  if (rankedResult.error) return new Response(JSON.stringify(fail(rankedResult.error.message)), { status: 500, headers: CORS_HEADERS });
+  const topRows = (rankedResult.data ?? []) as RankedRow[];
+
+  // The caller's own row (present or not) plus, if they're outside the top
+  // N, the row directly above them for decidingTier — two more single-row
+  // indexed lookups, never a re-rank.
+  let callerRow: RankedRow | null = null;
+  let aboveRow: RankedRow | null = null;
+  const callerInTop = topRows.find((r) => r.user_id === user.id);
+  if (callerInTop) {
+    callerRow = callerInTop;
+  } else {
+    const callerResult = await admin
+      .from('leaderboard_ranks')
+      .select('user_id, rnk, max_score, sum_score, max_time_bonus_micros, sum_time_bonus_micros, sum_lives_used, sum_levels_played, attempts_started, attempts_completed')
+      .eq('scope', scope)
+      .eq('period_key', periodKey)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (callerResult.error) return new Response(JSON.stringify(fail(callerResult.error.message)), { status: 500, headers: CORS_HEADERS });
+    callerRow = (callerResult.data as RankedRow) ?? null;
+    if (callerRow && callerRow.rnk > 1) {
+      const aboveResult = await admin
+        .from('leaderboard_ranks')
+        .select('user_id, rnk, max_score, sum_score, max_time_bonus_micros, sum_time_bonus_micros, sum_lives_used, sum_levels_played, attempts_started, attempts_completed')
+        .eq('scope', scope)
+        .eq('period_key', periodKey)
+        .eq('rnk', callerRow.rnk - 1)
+        .limit(1)
+        .maybeSingle();
+      if (!aboveResult.error) aboveRow = (aboveResult.data as RankedRow) ?? null;
+    }
+  }
+
+  const totalPlayers = snapshot.data.total_players;
+  if (totalPlayers === 0) {
     return new Response(
-      JSON.stringify({ scope, periodLabel, totalPlayers: 0, top: [], you: null }),
+      JSON.stringify({ scope, periodLabel, totalPlayers: 0, top: [], you: null, generatedAt: snapshot.data.generated_at, nextRefreshAt: snapshot.data.next_refresh_at }),
       { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );
   }
 
-  const totalPlayers = rankedRows[0].total_players;
-
-  // Display names for exactly the rows returned above (top N + caller +
-  // maybe one extra row for decidingTier) — never more than ~limit+2 ids,
-  // so this can never approach the URL-length problem §5.9 found: the old
-  // code put every single player in the scope into this same query.
+  const idsNeeded = new Set(topRows.map((r) => r.user_id));
+  if (callerRow) idsNeeded.add(callerRow.user_id);
   const namesResult = await admin
     .from('leaderboard_profiles')
     .select('id, display_name')
-    .in('id', rankedRows.map((r) => r.out_user_id));
+    .in('id', Array.from(idsNeeded));
   if (namesResult.error) return new Response(JSON.stringify(fail(namesResult.error.message)), { status: 500, headers: CORS_HEADERS });
   const nameById = new Map<string, string>(namesResult.data.map((n) => [n.id, n.display_name]));
 
-  // The RPC can return one extra row (the caller's decidingTier reference
-  // row, out_rnk = callerRank - 1) when the caller is outside the top
-  // `limit` — exclude it from the public top list, it was only fetched for
-  // the comparison below.
-  const top = rankedRows
-    .filter((r) => r.out_rnk <= limit)
-    .map((r) => buildEntry(r, nameById.get(r.out_user_id) ?? 'Unknown'));
+  const top = topRows.map((r) => buildEntry(r, nameById.get(r.user_id) ?? 'Unknown'));
 
-  const callerRow = rankedRows.find((r) => r.is_caller);
-  let you: ReturnType<typeof buildEntry> & { inTop: boolean; decidingTier: number | null; decidingTierName: string | null } | null = null;
+  let you:
+    | (ReturnType<typeof buildEntry> & { inTop: boolean; decidingTier: number | null; decidingTierName: string | null })
+    | null = null;
   if (callerRow) {
     const entry = buildEntry(callerRow, nameById.get(user.id) ?? 'You');
-    const aboveRow = rankedRows.find((r) => r.out_rnk === callerRow.out_rnk - 1);
-    const decidingTier = callerRow.out_rnk === 1 ? null : aboveRow ? decidingTierIndex(callerRow, aboveRow) : null;
+    const decidingTier = callerRow.rnk === 1 ? null : aboveRow ? decidingTierIndex(callerRow, aboveRow) : null;
     you = {
       ...entry,
-      inTop: callerRow.out_rnk <= limit,
+      inTop: callerRow.rnk <= limit,
       decidingTier,
       decidingTierName: decidingTier !== null ? TIER_NAMES[decidingTier - 1] : null,
     };
   }
 
   return new Response(
-    JSON.stringify({ scope, periodLabel, totalPlayers, top, you }),
+    JSON.stringify({ scope, periodLabel, totalPlayers, top, you, generatedAt: snapshot.data.generated_at, nextRefreshAt: snapshot.data.next_refresh_at }),
     { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
   );
 });
+
+// Fallback for a scope/period with no snapshot row yet — calls the
+// original live get_leaderboard_page() RPC (unchanged, still deployed;
+// supabase/migrations/20260919020000_phase12_leaderboard_scaling_fix.sql),
+// same as this function's entire behavior before the 2026-09-27 rewrite.
+// generatedAt/nextRefreshAt are omitted (null) — the client (leaderboard.js)
+// treats a missing nextRefreshAt as "don't cache this response, and show no
+// countdown," which is correct here: this data wasn't produced by the
+// fixed refresh schedule, so there's no meaningful "next refresh" to count
+// down to.
+async function liveFallback(
+  admin: ReturnType<typeof createClient>,
+  scope: Scope,
+  periodKey: string,
+  periodLabel: string,
+  callerId: string,
+  limit: number
+): Promise<Response> {
+  const rankedResult = await admin.rpc('get_leaderboard_page', {
+    p_scope: scope,
+    p_period_key: periodKey,
+    p_caller_id: callerId,
+    p_limit: limit,
+  });
+  if (rankedResult.error) return new Response(JSON.stringify(fail(rankedResult.error.message)), { status: 500, headers: CORS_HEADERS });
+  type LiveRow = RankedRow & { total_players: number; is_caller: boolean };
+  const rows = ((rankedResult.data ?? []) as any[]).map((r) => ({
+    user_id: r.out_user_id,
+    rnk: r.rnk,
+    max_score: r.out_max_score,
+    sum_score: r.out_sum_score,
+    max_time_bonus_micros: r.out_max_time_bonus_micros,
+    sum_time_bonus_micros: r.out_sum_time_bonus_micros,
+    sum_lives_used: r.out_sum_lives_used,
+    sum_levels_played: r.out_sum_levels_played,
+    attempts_started: r.out_attempts_started,
+    attempts_completed: r.out_attempts_completed,
+    total_players: r.total_players,
+    is_caller: r.is_caller,
+  })) as LiveRow[];
+
+  if (rows.length === 0) {
+    return new Response(
+      JSON.stringify({ scope, periodLabel, totalPlayers: 0, top: [], you: null, generatedAt: null, nextRefreshAt: null }),
+      { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+    );
+  }
+
+  const totalPlayers = rows[0].total_players;
+  const namesResult = await admin.from('leaderboard_profiles').select('id, display_name').in('id', rows.map((r) => r.user_id));
+  if (namesResult.error) return new Response(JSON.stringify(fail(namesResult.error.message)), { status: 500, headers: CORS_HEADERS });
+  const nameById = new Map<string, string>(namesResult.data.map((n) => [n.id, n.display_name]));
+
+  const top = rows.filter((r) => r.rnk <= limit).map((r) => buildEntry(r, nameById.get(r.user_id) ?? 'Unknown'));
+  const callerRow = rows.find((r) => r.is_caller) ?? null;
+  let you:
+    | (ReturnType<typeof buildEntry> & { inTop: boolean; decidingTier: number | null; decidingTierName: string | null })
+    | null = null;
+  if (callerRow) {
+    const entry = buildEntry(callerRow, nameById.get(callerId) ?? 'You');
+    const aboveRow = rows.find((r) => r.rnk === callerRow.rnk - 1) ?? null;
+    const decidingTier = callerRow.rnk === 1 ? null : aboveRow ? decidingTierIndex(callerRow, aboveRow) : null;
+    you = {
+      ...entry,
+      inTop: callerRow.rnk <= limit,
+      decidingTier,
+      decidingTierName: decidingTier !== null ? TIER_NAMES[decidingTier - 1] : null,
+    };
+  }
+
+  return new Response(
+    JSON.stringify({ scope, periodLabel, totalPlayers, top, you, generatedAt: null, nextRefreshAt: null }),
+    { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+  );
+}
