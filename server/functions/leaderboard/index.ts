@@ -1,29 +1,50 @@
 // Match Emojis Daily — leaderboard Edge Function (Phase 7)
 //
-// REWRITTEN 2026-09-27: previously called get_leaderboard_page() live, on
-// every request — a full 7-tier rank() pass over the scope's entire stats
-// table, every single leaderboard screen open, from every player. Now
-// reads leaderboard_ranks/leaderboard_snapshots instead (supabase/
-// migrations/20260927010000_leaderboard_snapshot_caching.sql), populated
-// on a fixed refresh schedule (daily: every 3h; weekly/all-time: once a
-// day) rather than per-request — this function's job is now just cheap
-// indexed lookups: top N, the caller's own row, and (if the caller is
-// outside the top N) the row directly above them for decidingTier. See
-// docs/DECISIONS.md's 2026-09-27 entry for the full reasoning.
+// REWRITTEN 2026-09-27, twice the same session:
+//
+// 1. Previously called get_leaderboard_page() live, on every request — a
+//    full 7-tier rank() pass over the scope's entire stats table, every
+//    single leaderboard screen open, from every player. Switched to
+//    reading leaderboard_ranks/leaderboard_snapshots instead (supabase/
+//    migrations/20260927010000_leaderboard_snapshot_caching.sql), so most
+//    reads become cheap indexed lookups: top N, the caller's own row, and
+//    (if the caller is outside the top N) the row directly above them for
+//    decidingTier.
+//
+// 2. Later the same session, before that migration was ever applied live
+//    (see the migration file's own header) — account holder requested,
+//    verbatim: "Make the Daily as Today & Week as Yesterday and remove the
+//    cap on refresh for Today in leaderboard, no more 12, 3, 6, 9, ist.
+//    Will refresh fresh." Confirmed interpretation: "Yesterday" is a frozen
+//    snapshot of the previous day's final daily standings (a single
+//    immutable day), not a rolling 7-day window. This rewrite:
+//      - renames the scopes 'daily' -> 'today', 'weekly' -> 'yesterday'
+//      - makes 'today' bypass the snapshot tables entirely and always rank
+//        live (see the branch in Deno.serve below) — no fixed refresh
+//        schedule at all, which is what "will refresh fresh" asked for.
+//        The standalone refresh-leaderboard-snapshot/index.ts function
+//        (the old 3-hourly 'daily' half) is retired outright — its code is
+//        removed from this repo.
+//      - makes 'yesterday' source from daily_stats for the single specific
+//        day just before today (not weekly_stats, not a rolling window),
+//        ranked once by generate-daily-games' existing midnight run and
+//        never touched again, since that day is over.
 //
 // get_leaderboard_page() itself (docs/ARCHITECTURE.md Section 7's 7-tier
 // cascade, supabase/migrations/20260919020000_phase12_leaderboard_scaling_fix.sql)
-// is kept as-is and used ONLY as a graceful fallback here — see
-// liveFallback() below — for the narrow case where a snapshot for the
-// requested scope/period doesn't exist yet (e.g. right after this feature
-// first deploys, before the first scheduled refresh has run for that
-// period). This fallback is expected to be rare in steady state, not the
-// normal path.
+// is kept as-is, untouched — its 'weekly' branch is simply never called
+// anymore (harmless dead code, not worth a migration to remove for a
+// same-session rename). It's used two ways here: directly, live, for every
+// 'today' request; and as liveFallback() for 'yesterday'/'all-time' in the
+// narrow case where a snapshot doesn't exist yet for the requested period
+// (e.g. right after this feature first deploys). That fallback is expected
+// to be rare in steady state, not the normal path.
 //
-// Accepts POST { scope: 'daily' | 'weekly' | 'all-time', date?: string,
-// limit?: number } — contract unchanged from before this rewrite. `date`
-// only applies to 'daily'/'weekly'; both default to "now, in IST" if
-// omitted. `limit` defaults to 50, capped at 200.
+// Accepts POST { scope: 'today' | 'yesterday' | 'all-time', limit?: number }.
+// No more `date` override — the client (leaderboard.js) never sent one, and
+// each scope now resolves to exactly one meaningful period ("now, in IST"
+// for 'today'; "yesterday, in IST" for 'yesterday'). `limit` defaults to
+// 50, capped at 200.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -33,7 +54,16 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-type Scope = 'daily' | 'weekly' | 'all-time';
+type Scope = 'today' | 'yesterday' | 'all-time';
+
+// get_leaderboard_page()/refresh_leaderboard_snapshot() still speak the old
+// internal scope name for anything sourced from daily_stats — both 'today'
+// and 'yesterday' map to it, since the underlying ranking query (7-tier
+// cascade over one specific stat_date) is identical; only the period_key
+// and the caching behavior around it differ.
+function sqlScopeFor(scope: Scope): 'daily' | 'all-time' {
+  return scope === 'all-time' ? 'all-time' : 'daily';
+}
 
 // Fixed sentinel period_key for the 'all-time' scope's single snapshot row
 // — MUST stay identical to generate-daily-games/index.ts's own constant of
@@ -105,12 +135,16 @@ function istDateString(): string {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-// Monday of the ISO week containing `dateStr` — matches the SQL side's
-// weekly branch in refresh_leaderboard_snapshot().
-function mondayOfWeek(dateStr: string): string {
+// The calendar date immediately before `dateStr` — used to resolve
+// 'yesterday's period_key from "today, in IST". Plain date-string
+// subtraction, no timezone conversion needed (dateStr is already an IST
+// calendar date, and shifting a bare calendar date back a day is the same
+// operation in any timezone) — same technique generate-daily-games/
+// index.ts's own dayBeforeIst() uses, duplicated per-file per this
+// codebase's convention rather than shared.
+function dayBeforeIst(dateStr: string): string {
   const d = new Date(`${dateStr}T00:00:00Z`);
-  const isoDay = d.getUTCDay() === 0 ? 7 : d.getUTCDay(); // Mon=1 .. Sun=7
-  d.setUTCDate(d.getUTCDate() - (isoDay - 1));
+  d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 }
 
@@ -146,15 +180,15 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify(fail('Missing Authorization header.')), { status: 401, headers: CORS_HEADERS });
   }
 
-  let body: { scope?: string; date?: string; limit?: number };
+  let body: { scope?: string; limit?: number };
   try {
     body = await req.json();
   } catch {
     return new Response(JSON.stringify(fail('Invalid JSON body.')), { status: 400, headers: CORS_HEADERS });
   }
   const scope = body.scope as Scope;
-  if (scope !== 'daily' && scope !== 'weekly' && scope !== 'all-time') {
-    return new Response(JSON.stringify(fail("scope must be 'daily', 'weekly', or 'all-time'.")), { status: 400, headers: CORS_HEADERS });
+  if (scope !== 'today' && scope !== 'yesterday' && scope !== 'all-time') {
+    return new Response(JSON.stringify(fail("scope must be 'today', 'yesterday', or 'all-time'.")), { status: 400, headers: CORS_HEADERS });
   }
   const limit = Math.min(Math.max(Number(body.limit) || 50, 1), 200);
 
@@ -179,14 +213,20 @@ Deno.serve(async (req: Request) => {
   const admin = createClient(supabaseUrl, serviceRoleKey);
 
   const today = istDateString();
+
+  if (scope === 'today') {
+    // Deliberately never cached — ranked live, every request, straight off
+    // get_leaderboard_page(). This is the entire point of the "will refresh
+    // fresh" request: no snapshot tables, no next_refresh_at, nothing to
+    // ever be stale.
+    return await liveFallback(admin, 'daily', today, today, user.id, limit, 'today');
+  }
+
   let periodLabel: string;
   let periodKey: string;
 
-  if (scope === 'daily') {
-    periodKey = body.date ?? today;
-    periodLabel = periodKey;
-  } else if (scope === 'weekly') {
-    periodKey = mondayOfWeek(body.date ?? today);
+  if (scope === 'yesterday') {
+    periodKey = dayBeforeIst(today);
     periodLabel = periodKey;
   } else {
     periodKey = ALL_TIME_PERIOD_KEY; // the single fixed row — see the constant's own comment
@@ -203,13 +243,13 @@ Deno.serve(async (req: Request) => {
 
   if (!snapshot.data) {
     // No refresh has run yet for this exact scope/period — expected to be
-    // rare (a brand-new period right as this feature first deploys, or a
-    // manually-requested past date old enough to predate this feature).
+    // rare (a brand-new period right as this feature first deploys, before
+    // the first midnight run has ever populated 'yesterday'/'all-time').
     // Falls back to computing live, this one time, rather than showing the
     // player an empty leaderboard. Does not write a snapshot itself — the
     // scheduled refresh is still the only writer, keeping this fallback's
     // own read-cost bounded to just this one request.
-    return await liveFallback(admin, scope, periodKey, periodLabel, user.id, limit);
+    return await liveFallback(admin, sqlScopeFor(scope), periodKey, periodLabel, user.id, limit, scope);
   }
 
   const rankedResult = await admin
@@ -292,25 +332,29 @@ Deno.serve(async (req: Request) => {
   );
 });
 
-// Fallback for a scope/period with no snapshot row yet — calls the
+// Fallback for a scope/period with no snapshot row yet (or for 'today',
+// unconditionally — see its branch in Deno.serve above) — calls the
 // original live get_leaderboard_page() RPC (unchanged, still deployed;
-// supabase/migrations/20260919020000_phase12_leaderboard_scaling_fix.sql),
-// same as this function's entire behavior before the 2026-09-27 rewrite.
+// supabase/migrations/20260919020000_phase12_leaderboard_scaling_fix.sql).
+// `sqlScope` is get_leaderboard_page()'s own internal scope name ('daily'
+// or 'all-time' — see sqlScopeFor()); `responseScope` is what's echoed back
+// to the client ('today', 'yesterday', or 'all-time') — these differ for
+// 'today', which the SQL function still knows only as 'daily'.
 // generatedAt/nextRefreshAt are omitted (null) — the client (leaderboard.js)
-// treats a missing nextRefreshAt as "don't cache this response, and show no
-// countdown," which is correct here: this data wasn't produced by the
-// fixed refresh schedule, so there's no meaningful "next refresh" to count
-// down to.
+// treats a missing nextRefreshAt as "don't cache this response," which is
+// correct here: 'today' is NEVER meant to be cached, and a 'yesterday'/
+// 'all-time' fallback wasn't produced by the fixed refresh schedule either.
 async function liveFallback(
   admin: ReturnType<typeof createClient>,
-  scope: Scope,
+  sqlScope: 'daily' | 'all-time',
   periodKey: string,
   periodLabel: string,
   callerId: string,
-  limit: number
+  limit: number,
+  responseScope: Scope
 ): Promise<Response> {
   const rankedResult = await admin.rpc('get_leaderboard_page', {
-    p_scope: scope,
+    p_scope: sqlScope,
     p_period_key: periodKey,
     p_caller_id: callerId,
     p_limit: limit,
@@ -334,7 +378,7 @@ async function liveFallback(
 
   if (rows.length === 0) {
     return new Response(
-      JSON.stringify({ scope, periodLabel, totalPlayers: 0, top: [], you: null, generatedAt: null, nextRefreshAt: null }),
+      JSON.stringify({ scope: responseScope, periodLabel, totalPlayers: 0, top: [], you: null, generatedAt: null, nextRefreshAt: null }),
       { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );
   }
@@ -362,7 +406,7 @@ async function liveFallback(
   }
 
   return new Response(
-    JSON.stringify({ scope, periodLabel, totalPlayers, top, you, generatedAt: null, nextRefreshAt: null }),
+    JSON.stringify({ scope: responseScope, periodLabel, totalPlayers, top, you, generatedAt: null, nextRefreshAt: null }),
     { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
   );
 }
