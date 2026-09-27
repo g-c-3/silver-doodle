@@ -380,15 +380,16 @@
       <h1>Leaderboard</h1>
 
       <div class="lb-tabs">
-        <button type="button" class="lb-tab" data-scope="daily">Daily</button>
-        <button type="button" class="lb-tab" data-scope="weekly">Weekly</button>
+        <button type="button" class="lb-tab" data-scope="today">Today</button>
+        <button type="button" class="lb-tab" data-scope="yesterday">Yesterday</button>
         <button type="button" class="lb-tab" data-scope="all-time">All-time</button>
       </div>
 
-      <!-- 2026-09-27: refresh cadence — a live countdown for 'daily' (every
-           3h), static text for 'weekly'/'all-time' (once a day at 12am).
-           Populated by leaderboard.js; empty/hidden until the first load
-           resolves. -->
+      <!-- 2026-09-27 (renamed same session, before this shipped): refresh
+           cadence — static text per scope now, no countdown ('today' is
+           live on every request; 'yesterday' is permanently final;
+           'all-time' still just says "once a day"). Populated by
+           leaderboard.js; empty/hidden until the first load resolves. -->
       <p class="lb-refresh-info hidden" id="lb-refresh-info"></p>
 
       <p class="muted" id="lb-period-label"></p>
