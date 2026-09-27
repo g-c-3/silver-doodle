@@ -7,6 +7,8 @@
   --accent-2: #7c6fff;
   --danger: #ff5c5c;
   --gold: #f5b942;
+  --silver: #c7cdd8;
+  --bronze: #cd7f32;
   --radius: 16px;
 
   /* Single source of truth for "how big does a game tile render", shared
@@ -1188,8 +1190,37 @@ a.primary {
   color: var(--muted);
 }
 
-.lb-row.lb-row-top .lb-row-rank {
-  color: var(--gold);
+/* 2026-09-27: distinct medal styling per rank, replacing the old single
+   .lb-row-top (which only recolored the rank number and treated 1st/2nd/3rd
+   identically). Each rank gets its own left accent bar + tinted background,
+   using the --gold/--silver/--bronze variables above; the number itself
+   stays that rank's color for a bit of extra pop against the tint. */
+.lb-row.lb-row-rank-1 {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--gold) 18%, var(--surface)), var(--surface));
+  border-left: 3px solid var(--gold);
+}
+.lb-row.lb-row-rank-2 {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--silver) 18%, var(--surface)), var(--surface));
+  border-left: 3px solid var(--silver);
+}
+.lb-row.lb-row-rank-3 {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--bronze) 18%, var(--surface)), var(--surface));
+  border-left: 3px solid var(--bronze);
+}
+.lb-row.lb-row-rank-1 .lb-row-rank { color: var(--gold); }
+.lb-row.lb-row-rank-2 .lb-row-rank { color: var(--silver); }
+.lb-row.lb-row-rank-3 .lb-row-rank { color: var(--bronze); }
+
+.lb-refresh-info {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  margin: -4px 0 2px;
+}
+.lb-refresh-info.lb-refresh-countdown {
+  font-variant-numeric: tabular-nums; /* keeps the ticking digits from jittering the layout every second */
+  color: var(--accent-2);
+  font-weight: 700;
 }
 
 .lb-row-name {
