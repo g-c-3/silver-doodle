@@ -40,6 +40,20 @@
 // its scheduled call — Supabase Cron Triggers support custom headers in
 // their HTTP request config. Until both are done, every call (including
 // the legitimate daily cron) will get 403 Forbidden.
+//
+// 2026-09-27: also now runs the day-end half of forfeit detection, folded
+// into this function's existing once-daily cron run rather than standing
+// up a third scheduled function. Replaces attempt-heartbeat (deleted) and
+// forfeit-stale-attempts (deleted) — see docs/DECISIONS.md's 2026-09-27
+// entry for the full reasoning (storage-write cost, no score-integrity
+// impact either way). The other half — a new attempt forfeiting the SAME
+// user's other dangling in_progress attempts — lives in start_attempt_slot
+// (supabase/migrations/20260927000000_event_driven_forfeit.sql). This
+// function's half catches whatever trigger #1 can't: an attempt abandoned
+// on a day the player never returns to play again. Runs before the
+// idempotency check below so it still executes even when today's
+// definitions already exist (e.g. a re-fired cron) — the sweep is
+// idempotent either way, a second run simply finds nothing left to update.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -192,6 +206,65 @@ function istDateString(): string {
   return `${get('year')}-${get('month')}-${get('day')}`; // YYYY-MM-DD, matches a Postgres `date`
 }
 
+// Start of the given IST calendar date, as a UTC instant — the cutoff for
+// the 2026-09-27 forfeit sweep below. IST is a fixed UTC+5:30 offset (no
+// DST), so this is safe as a constant rather than needing real
+// timezone-database math — same reasoning as start-attempt/index.ts's own
+// istDayBoundsUtc().
+function istDayStartUtc(dateStr: string): string {
+  return new Date(`${dateStr}T00:00:00+05:30`).toISOString();
+}
+
+// ---- 2026-09-27: leaderboard snapshot refresh (weekly/all-time half) ----
+// See supabase/migrations/20260927010000_leaderboard_snapshot_caching.sql
+// and server/functions/refresh-leaderboard-snapshot/index.ts (the other
+// half — 'daily' scope, every 3h) for the full design.
+
+// Monday of the ISO week containing `dateStr` — duplicated from
+// leaderboard/index.ts's own mondayOfWeek() rather than shared, same
+// per-function-duplication convention this codebase already uses for the
+// seeded RNG (see the file header) and istDateString() itself.
+function mondayOfWeek(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  const isoDay = d.getUTCDay() === 0 ? 7 : d.getUTCDay(); // Mon=1 .. Sun=7
+  d.setUTCDate(d.getUTCDate() - (isoDay - 1));
+  return d.toISOString().slice(0, 10);
+}
+
+// Fixed sentinel period_key for the 'all-time' scope's single row —
+// leaderboard_snapshots/leaderboard_ranks are keyed by (scope, period_key),
+// and 'all-time' has no real period, but the column is NOT NULL. Using
+// today's date here (like get_leaderboard_page's now-unused p_period_key
+// parameter did) would insert a NEW row every single day instead of
+// updating the same one — this constant must stay IDENTICAL across this
+// file and leaderboard/index.ts's read side, by hand, forever.
+const ALL_TIME_PERIOD_KEY = '2000-01-01';
+
+const REFRESH_HOURS_IST = [0, 3, 6, 9, 12, 15, 18, 21]; // the 8 fixed daily boundaries, product decision
+
+// Next of the 8 fixed IST daily boundaries strictly after `now` — for the
+// 'daily' scope's next_refresh_at. Duplicated from refresh-leaderboard-
+// snapshot/index.ts's identical helper (same per-function convention).
+function nextDailyRefreshAtUtc(now: Date): string {
+  const todayIst = istDateString();
+  for (const hour of REFRESH_HOURS_IST) {
+    const candidate = new Date(`${todayIst}T${String(hour).padStart(2, '0')}:00:00+05:30`);
+    if (candidate.getTime() > now.getTime()) return candidate.toISOString();
+  }
+  const tomorrow = new Date(istDayStartUtc(todayIst));
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  return tomorrow.toISOString();
+}
+
+// Next midnight IST strictly after `now` — for 'weekly'/'all-time', which
+// only ever refresh once a day, at the same boundary this whole function
+// already runs on.
+function nextMidnightIstUtc(gameDate: string): string {
+  const next = new Date(istDayStartUtc(gameDate));
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString();
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS_HEADERS });
@@ -253,6 +326,55 @@ Deno.serve(async (req: Request) => {
   }
   const admin = createClient(supabaseUrl, serviceRoleKey);
 
+  // 2026-09-27: forfeit trigger #2 (file header) — any attempt still
+  // in_progress from BEFORE today (gameDate, not necessarily "today" if
+  // this was called with a backfill override — deliberately using the
+  // resolved gameDate here, not a fresh istDateString() call, so a manual
+  // backfill run sweeps relative to the date it's generating for) is
+  // definitely abandoned: the player never returned to either finish it or
+  // start a new attempt that would have caught it via trigger #1. score_day
+  // is set to gameDate (the day this forfeit is detected/settled), same
+  // rule forfeit-stale-attempts always used. Best-effort: a failure here
+  // logs but doesn't block today's game generation below — stale rows
+  // just get swept on the next run instead.
+  const forfeitSweep = await admin
+    .from('attempts')
+    .update({ status: 'forfeited', completed_at: new Date().toISOString(), score_day: gameDate })
+    .eq('status', 'in_progress')
+    .lt('started_at', istDayStartUtc(gameDate))
+    .select('id');
+  if (forfeitSweep.error) {
+    console.error(`Forfeit sweep failed for ${gameDate}: ${forfeitSweep.error.message}`);
+  }
+
+  // 2026-09-27: leaderboard snapshot refresh — 'weekly' and 'all-time'
+  // halves (see refresh-leaderboard-snapshot/index.ts for the 'daily'
+  // half, run separately every 3h). This midnight IST run is also one of
+  // the 8 three-hourly 'daily' boundaries, so 'daily' is refreshed here
+  // too — redundant with whatever refresh-leaderboard-snapshot's own
+  // midnight cron slot does a moment later, but refresh_leaderboard_
+  // snapshot() is a plain overwrite, so a duplicate run at the same
+  // instant is harmless, not a correctness risk. Best-effort per scope,
+  // same reasoning as the forfeit sweep above — a failure here delays the
+  // leaderboard, not today's game generation.
+  const now = new Date();
+  const weekStart = mondayOfWeek(gameDate);
+  const nextMidnight = nextMidnightIstUtc(gameDate);
+  for (const [scope, periodKey, nextRefreshAt] of [
+    ['daily', gameDate, nextDailyRefreshAtUtc(now)],
+    ['weekly', weekStart, nextMidnight],
+    ['all-time', ALL_TIME_PERIOD_KEY, nextMidnight],
+  ] as const) {
+    const refresh = await admin.rpc('refresh_leaderboard_snapshot', {
+      p_scope: scope,
+      p_period_key: periodKey,
+      p_next_refresh_at: nextRefreshAt,
+    });
+    if (refresh.error) {
+      console.error(`Leaderboard snapshot refresh failed for ${scope}/${periodKey}: ${refresh.error.message}`);
+    }
+  }
+
   // Idempotency check — see file header.
   const existing = await admin
     .from('daily_game_definitions')
@@ -260,7 +382,7 @@ Deno.serve(async (req: Request) => {
     .eq('game_date', gameDate);
   if ((existing.count ?? 0) > 0) {
     return new Response(
-      JSON.stringify({ ok: true, gameDate, generated: false, note: 'Definitions already exist for this date — no-op.' }),
+      JSON.stringify({ ok: true, gameDate, generated: false, forfeited: forfeitSweep.data?.length ?? 0, note: 'Definitions already exist for this date — no-op.' }),
       { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );
   }
@@ -300,7 +422,7 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return new Response(JSON.stringify({ ok: true, gameDate, generated: true, gamesCreated: GAME_COUNT_PER_DAY }), {
+  return new Response(JSON.stringify({ ok: true, gameDate, generated: true, gamesCreated: GAME_COUNT_PER_DAY, forfeited: forfeitSweep.data?.length ?? 0 }), {
     status: 200,
     headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   });
