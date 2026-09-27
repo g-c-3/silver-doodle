@@ -385,6 +385,12 @@
         <button type="button" class="lb-tab" data-scope="all-time">All-time</button>
       </div>
 
+      <!-- 2026-09-27: refresh cadence — a live countdown for 'daily' (every
+           3h), static text for 'weekly'/'all-time' (once a day at 12am).
+           Populated by leaderboard.js; empty/hidden until the first load
+           resolves. -->
+      <p class="lb-refresh-info hidden" id="lb-refresh-info"></p>
+
       <p class="muted" id="lb-period-label"></p>
       <p id="lb-error" class="error hidden"></p>
 
