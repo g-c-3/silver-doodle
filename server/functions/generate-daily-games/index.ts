@@ -215,19 +215,35 @@ function istDayStartUtc(dateStr: string): string {
   return new Date(`${dateStr}T00:00:00+05:30`).toISOString();
 }
 
-// ---- 2026-09-27: leaderboard snapshot refresh (weekly/all-time half) ----
-// See supabase/migrations/20260927010000_leaderboard_snapshot_caching.sql
-// and server/functions/refresh-leaderboard-snapshot/index.ts (the other
-// half — 'daily' scope, every 3h) for the full design.
+// ---- 2026-09-27: leaderboard snapshot refresh (yesterday/all-time half) ----
+// See supabase/migrations/20260927010000_leaderboard_snapshot_caching.sql.
+// REWRITTEN later the same session, before that migration was ever applied
+// live (see the migration file's own header) — 'daily'/'weekly' renamed to
+// 'today'/'yesterday' per the account holder's direct request, and 'today'
+// stopped being cached/refreshed on any schedule at all (it's now ranked
+// live by leaderboard/index.ts on every request instead — "will refresh
+// fresh"), so the standalone refresh-leaderboard-snapshot/index.ts function
+// (the old 3-hourly 'daily' half) is retired outright, same treatment as
+// the attempt-heartbeat retirement earlier this session — its code is
+// removed from this repo; the deployed Edge Function itself (it has no
+// Cron Trigger configured yet, so nothing was ever actually calling it on
+// a schedule) still needs manual deletion from the Supabase Dashboard.
+// 'yesterday' only needs ranking ONCE, right here, right after the day it
+// describes ends — never again afterward, since that day is now over —
+// so it's folded into this function's existing once-daily midnight run
+// alongside 'all-time', exactly like 'weekly' used to be.
 
-// Monday of the ISO week containing `dateStr` — duplicated from
-// leaderboard/index.ts's own mondayOfWeek() rather than shared, same
-// per-function-duplication convention this codebase already uses for the
-// seeded RNG (see the file header) and istDateString() itself.
-function mondayOfWeek(dateStr: string): string {
+// The calendar date immediately before `dateStr`, as a plain date-string
+// subtraction (no timezone conversion needed — `dateStr` is already an IST
+// calendar date, and shifting a bare calendar date back by one day is the
+// same operation in any timezone). Duplicated per-file rather than shared,
+// same convention as this codebase's other small cross-file constants —
+// replaces the old mondayOfWeek() helper, which is no longer needed now
+// that this run's leaderboard half describes a single frozen day, not a
+// rolling week.
+function dayBeforeIst(dateStr: string): string {
   const d = new Date(`${dateStr}T00:00:00Z`);
-  const isoDay = d.getUTCDay() === 0 ? 7 : d.getUTCDay(); // Mon=1 .. Sun=7
-  d.setUTCDate(d.getUTCDate() - (isoDay - 1));
+  d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 }
 
@@ -240,25 +256,13 @@ function mondayOfWeek(dateStr: string): string {
 // file and leaderboard/index.ts's read side, by hand, forever.
 const ALL_TIME_PERIOD_KEY = '2000-01-01';
 
-const REFRESH_HOURS_IST = [0, 3, 6, 9, 12, 15, 18, 21]; // the 8 fixed daily boundaries, product decision
-
-// Next of the 8 fixed IST daily boundaries strictly after `now` — for the
-// 'daily' scope's next_refresh_at. Duplicated from refresh-leaderboard-
-// snapshot/index.ts's identical helper (same per-function convention).
-function nextDailyRefreshAtUtc(now: Date): string {
-  const todayIst = istDateString();
-  for (const hour of REFRESH_HOURS_IST) {
-    const candidate = new Date(`${todayIst}T${String(hour).padStart(2, '0')}:00:00+05:30`);
-    if (candidate.getTime() > now.getTime()) return candidate.toISOString();
-  }
-  const tomorrow = new Date(istDayStartUtc(todayIst));
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  return tomorrow.toISOString();
-}
-
-// Next midnight IST strictly after `now` — for 'weekly'/'all-time', which
-// only ever refresh once a day, at the same boundary this whole function
-// already runs on.
+// Next midnight IST strictly after `now` — for 'all-time', which only ever
+// refreshes once a day, at the same boundary this whole function already
+// runs on. Also stamped onto 'yesterday's row purely for schema consistency
+// (the column is NOT NULL) — 'yesterday' is never actually re-read against
+// this value, since that day's ranking is genuinely final the moment it's
+// written; see leaderboard/index.ts, which reads 'yesterday' unconditionally
+// rather than checking next_refresh_at the way the old 'daily' scope did.
 function nextMidnightIstUtc(gameDate: string): string {
   const next = new Date(istDayStartUtc(gameDate));
   next.setUTCDate(next.getUTCDate() + 1);
@@ -347,22 +351,17 @@ Deno.serve(async (req: Request) => {
     console.error(`Forfeit sweep failed for ${gameDate}: ${forfeitSweep.error.message}`);
   }
 
-  // 2026-09-27: leaderboard snapshot refresh — 'weekly' and 'all-time'
-  // halves (see refresh-leaderboard-snapshot/index.ts for the 'daily'
-  // half, run separately every 3h). This midnight IST run is also one of
-  // the 8 three-hourly 'daily' boundaries, so 'daily' is refreshed here
-  // too — redundant with whatever refresh-leaderboard-snapshot's own
-  // midnight cron slot does a moment later, but refresh_leaderboard_
-  // snapshot() is a plain overwrite, so a duplicate run at the same
-  // instant is harmless, not a correctness risk. Best-effort per scope,
-  // same reasoning as the forfeit sweep above — a failure here delays the
-  // leaderboard, not today's game generation.
-  const now = new Date();
-  const weekStart = mondayOfWeek(gameDate);
+  // 2026-09-27: leaderboard snapshot refresh — 'yesterday' and 'all-time'.
+  // 'yesterday' is keyed to the day just BEFORE gameDate (the day that just
+  // ended, now being frozen for good), not gameDate itself — gameDate is
+  // the day this run is generating game definitions FOR, i.e. the new
+  // "today". Best-effort per scope, same reasoning as the forfeit sweep
+  // above — a failure here delays the leaderboard, not today's game
+  // generation.
+  const yesterday = dayBeforeIst(gameDate);
   const nextMidnight = nextMidnightIstUtc(gameDate);
   for (const [scope, periodKey, nextRefreshAt] of [
-    ['daily', gameDate, nextDailyRefreshAtUtc(now)],
-    ['weekly', weekStart, nextMidnight],
+    ['yesterday', yesterday, nextMidnight],
     ['all-time', ALL_TIME_PERIOD_KEY, nextMidnight],
   ] as const) {
     const refresh = await admin.rpc('refresh_leaderboard_snapshot', {
