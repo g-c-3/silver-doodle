@@ -11,21 +11,33 @@
 // rendering only. Static DOM wiring (tab clicks, the Back button, the Home
 // screen's entry button) lives in app.js, same as every other screen.
 //
-// REWRITTEN 2026-09-27: the server (leaderboard/index.ts) now reads a
-// cached snapshot refreshed on a fixed schedule (daily: every 3h at
-// 12/3/6/9 IST am+pm; weekly/all-time: once a day at 12am IST) instead of
-// ranking live on every request — see that file and docs/DECISIONS.md's
-// 2026-09-27 entry. This file adds the matching client half: cache each
-// scope's response in localStorage until its own nextRefreshAt passes, so
-// repeat opens within the same window never call the Edge Function at all;
-// a live countdown to the next refresh for 'daily'; and distinct
-// gold/silver/bronze styling for the top 3 rows.
+// REWRITTEN 2026-09-27, twice the same session:
+//
+// 1. The server started reading a cached snapshot refreshed on a fixed
+//    schedule instead of ranking live on every request. This file added
+//    the matching client half: cache each scope's response in localStorage
+//    until its own nextRefreshAt passes, a live countdown to the next
+//    refresh, and distinct gold/silver/bronze styling for the top 3 rows.
+//
+// 2. Account holder requested (verbatim): "Make the Daily as Today & Week
+//    as Yesterday and remove the cap on refresh for Today in leaderboard,
+//    no more 12, 3, 6, 9, ist. Will refresh fresh." — see
+//    server/functions/leaderboard/index.ts's own header for the full
+//    rename. Scopes here become 'today' (never cached — the server now
+//    omits nextRefreshAt on every 'today' response, so the existing
+//    writeCache()/readCache() logic below already does the right thing
+//    with zero changes: no nextRefreshAt means never cached, which is
+//    exactly "will refresh fresh") and 'yesterday' (a single frozen day,
+//    cached indefinitely — no countdown needed since it never changes
+//    again). The countdown apparatus this file previously had for 'daily'
+//    is removed outright: no remaining scope needs one ('today' is live,
+//    'yesterday' is permanently final, 'all-time' still just shows static
+//    "refreshes once a day" text, same as before).
 
 const Leaderboard = (function () {
-  let currentScope = 'daily';
+  let currentScope = 'today';
   let loadToken = 0; // bumped on every loadScope() call; guards a slow request from
                       // overwriting a faster later tab switch's result
-  let countdownHandle = null;
 
   function el(id) {
     return document.getElementById(id);
@@ -49,8 +61,8 @@ const Leaderboard = (function () {
 
   function periodLabelText(scope, periodLabel, totalPlayers) {
     const count = totalPlayers === 1 ? '1 player' : `${totalPlayers} players`;
-    if (scope === 'daily') return `${periodLabel} — ${count}`;
-    if (scope === 'weekly') return `Week of ${periodLabel} — ${count}`;
+    if (scope === 'today') return `Today — ${count}`;
+    if (scope === 'yesterday') return `Yesterday — ${count}`;
     return `All-time — ${count}`;
   }
 
@@ -62,11 +74,13 @@ const Leaderboard = (function () {
 
   // ---- Cache (localStorage, keyed per scope) ----
   // Only ever holds ONE entry per scope — the most recent response — since
-  // 'daily'/'weekly' naturally roll to a new period at each real-world
-  // refresh anyway, so there's nothing worth keeping from the period
-  // before. A response with no nextRefreshAt (the server's liveFallback()
-  // path — no snapshot existed yet for that period) is deliberately never
-  // cached: there's no fixed schedule behind it to safely trust until.
+  // every scope naturally rolls to a new period at each real-world refresh
+  // anyway, so there's nothing worth keeping from the period before. A
+  // response with no nextRefreshAt is deliberately never cached: 'today'
+  // always omits it (never meant to be cached — "will refresh fresh"), and
+  // for any other scope it means the server's liveFallback() path was hit
+  // (no snapshot existed yet for that period), which has no fixed schedule
+  // behind it to safely trust until.
   function cacheKey(scope) {
     return `lb_cache_${scope}`;
   }
@@ -94,46 +108,22 @@ const Leaderboard = (function () {
     }
   }
 
-  // ---- Refresh-cadence display: live countdown for 'daily', static text
-  // for 'weekly'/'all-time' ----
-  function stopCountdown() {
-    clearInterval(countdownHandle);
-    countdownHandle = null;
-  }
-
-  function renderRefreshInfo(scope, nextRefreshAt) {
-    stopCountdown();
+  // ---- Refresh-cadence display: static text per scope ----
+  // No countdown anymore for any scope (removed 2026-09-27 along with the
+  // 'daily' cap it existed for): 'today' is live on every request, so
+  // there's nothing to count down to; 'yesterday' is permanently final;
+  // 'all-time' only ever needed the static "once a day" text in the first
+  // place.
+  function renderRefreshInfo(scope) {
     const infoEl = el('lb-refresh-info');
-    if (scope !== 'daily') {
-      infoEl.textContent = 'Refreshes once everyday at 12 am.';
-      infoEl.classList.remove('hidden', 'lb-refresh-countdown');
-      return;
-    }
-    if (!nextRefreshAt) {
-      infoEl.classList.add('hidden'); // liveFallback() response — no fixed schedule to count down to
-      return;
-    }
-    infoEl.classList.add('lb-refresh-countdown');
     infoEl.classList.remove('hidden');
-    const target = Date.parse(nextRefreshAt);
-    const tick = () => {
-      const remainingMs = target - Date.now();
-      if (remainingMs <= 0) {
-        // The scheduled refresh has passed — the cached data (if any) is
-        // stale now too, so just re-load rather than keep counting into
-        // negative numbers.
-        stopCountdown();
-        if (scope === currentScope) loadScope(scope, { force: true });
-        return;
-      }
-      const totalSeconds = Math.floor(remainingMs / 1000);
-      const h = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
-      const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
-      const s = String(totalSeconds % 60).padStart(2, '0');
-      infoEl.textContent = `Next update in ${h}:${m}:${s}`;
-    };
-    tick();
-    countdownHandle = setInterval(tick, 1000);
+    if (scope === 'today') {
+      infoEl.textContent = 'Live — always up to date.';
+    } else if (scope === 'yesterday') {
+      infoEl.textContent = "Final — yesterday's standings are locked in.";
+    } else {
+      infoEl.textContent = 'Refreshes once everyday at 12 am.';
+    }
   }
 
   function renderYouCard(you) {
@@ -184,7 +174,7 @@ const Leaderboard = (function () {
 
   function renderData(scope, data) {
     el('lb-period-label').textContent = periodLabelText(scope, data.periodLabel, data.totalPlayers);
-    renderRefreshInfo(scope, data.nextRefreshAt);
+    renderRefreshInfo(scope);
 
     if (data.top.length === 0) {
       el('lb-empty').classList.remove('hidden');
@@ -203,7 +193,6 @@ const Leaderboard = (function () {
     el('lb-list').innerHTML = '';
     el('lb-you-card').classList.add('hidden');
     el('lb-empty').classList.add('hidden');
-    stopCountdown();
     el('lb-refresh-info').classList.add('hidden');
 
     if (!force) {
@@ -236,12 +225,11 @@ const Leaderboard = (function () {
   }
 
   function close() {
-    // Not currently called anywhere (leaving via the Back button just
-    // shows a different screen, same as every other screen in this app),
-    // but a running countdown interval should never survive past its own
-    // screen being closed — exposed for app.js to wire up if that ever
-    // changes, and cheap insurance either way.
-    stopCountdown();
+    // No-op now — kept as a stable exported surface for app.js (not
+    // currently called anywhere; leaving via the Back button just shows a
+    // different screen, same as every other screen in this app). Used to
+    // stop a running countdown interval, but no scope has one anymore
+    // (2026-09-27 — see this file's header).
   }
 
   return {
