@@ -2,21 +2,28 @@
 #
 # Only declares what needs to differ from Supabase's defaults. By default
 # every function requires a valid user JWT in Authorization (verify_jwt =
-# true) -- correct for start-attempt / score-replay / attempt-heartbeat /
-# leaderboard, which are only ever called by the signed-in client via
-# supabase.functions.invoke().
+# true) -- correct for start-attempt / score-replay / leaderboard, which are
+# only ever called by the signed-in client via supabase.functions.invoke().
 #
-# forfeit-stale-attempts and generate-daily-games are different: they're
-# invoked only by Supabase's own Cron scheduler (pg_cron/pg_net), never by
-# the client, and send no Authorization header at all -- see each
-# function's own header comment. JWT verification for both was switched
-# off manually in the Dashboard when they were first deployed there
-# (Phase 8), before this file existed. This file makes that setting
-# explicit and reproducible so deploy-functions.yml's CLI-based deploy
-# can't silently reset it back to the platform default and break the
-# cron path -- without it, the very first CI-driven redeploy of either
-# function would start rejecting Supabase's own cron calls with a 401,
-# silently breaking daily game generation and stale-attempt cleanup.
+# generate-daily-games is different: it's invoked only by Supabase's own
+# Cron scheduler (pg_cron/pg_net), never by the client, and sends no
+# Authorization header at all -- see its own header comment. JWT
+# verification was switched off manually in the Dashboard when it was
+# first deployed there (Phase 8), before this file existed. This file
+# makes that setting explicit and reproducible so deploy-functions.yml's
+# CLI-based deploy can't silently reset it back to the platform default
+# and break the cron path -- without it, the very first CI-driven redeploy
+# would start rejecting Supabase's own cron calls with a 401, silently
+# breaking daily game generation.
+#
+# 2026-09-28: the [functions.forfeit-stale-attempts] block that used to sit
+# here was removed. That function's directory was deleted from
+# server/functions/ (event-driven forfeit detection replaced it, see
+# docs/DECISIONS.md), but this block stayed behind, and the Supabase CLI
+# treats every [functions.*] entry as a function to deploy -- so CI failed
+# with "Entrypoint path does not exist" on
+# supabase/functions/forfeit-stale-attempts/index.ts. Retiring a function
+# means removing its folder AND its block here.
 #
 # admob-ssv (Phase 10) is a third case in the same category: it's called
 # directly by Google's AdMob servers as a server-to-server callback, which
@@ -25,9 +32,6 @@
 # cryptographic signature over the callback's own query parameters, not a
 # Supabase JWT).
 project_id = "wgkcxixocfzydawurluh"
-
-[functions.forfeit-stale-attempts]
-verify_jwt = false
 
 [functions.generate-daily-games]
 verify_jwt = false
