@@ -93,13 +93,16 @@ create table if not exists public.leaderboard_snapshots (
 -- (Postgres's default auto-generated name for a column-level CHECK is
 -- `<table>_<column>_check`, which is what's being targeted here).
 alter table public.leaderboard_snapshots drop constraint if exists leaderboard_snapshots_scope_check;
-alter table public.leaderboard_snapshots add constraint leaderboard_snapshots_scope_check check (scope in ('yesterday', 'all-time'));
 
 -- Any row left over from an old-scope refresh cycle (a 'daily'/'weekly'
--- row inserted before this rename shipped) would now violate the
--- constraint just added anyway, and is meaningless under the new design —
--- cleaned up explicitly rather than left to be silently unreadable.
+-- row inserted before this rename shipped) is meaningless under the new
+-- design and would make the constraint below fail to add (23514: "is
+-- violated by some row" — hit for real on the first attempt at this
+-- script, which had this delete AFTER the add constraint). Deleted first,
+-- explicitly, so the constraint is only ever added against clean data.
 delete from public.leaderboard_snapshots where scope not in ('yesterday', 'all-time');
+
+alter table public.leaderboard_snapshots add constraint leaderboard_snapshots_scope_check check (scope in ('yesterday', 'all-time'));
 
 alter table public.leaderboard_snapshots enable row level security;
 -- No policies — every read goes through the leaderboard Edge Function's
@@ -123,8 +126,8 @@ create table if not exists public.leaderboard_ranks (
 );
 
 alter table public.leaderboard_ranks drop constraint if exists leaderboard_ranks_scope_check;
+delete from public.leaderboard_ranks where scope not in ('yesterday', 'all-time'); -- before the constraint, same reason as above
 alter table public.leaderboard_ranks add constraint leaderboard_ranks_scope_check check (scope in ('yesterday', 'all-time'));
-delete from public.leaderboard_ranks where scope not in ('yesterday', 'all-time');
 
 alter table public.leaderboard_ranks enable row level security;
 -- No policies — same reasoning as leaderboard_snapshots above.
