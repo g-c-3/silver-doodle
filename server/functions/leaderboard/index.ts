@@ -363,7 +363,9 @@ async function liveFallback(
   type LiveRow = RankedRow & { total_players: number; is_caller: boolean };
   const rows = ((rankedResult.data ?? []) as any[]).map((r) => ({
     user_id: r.out_user_id,
-    rnk: r.rnk,
+    // Number() + fallback to out_rnk: tolerates bigint-as-string and a live
+    // function whose rank column carries the out_ prefix like its siblings.
+    rnk: Number(r.rnk ?? r.out_rnk),
     max_score: r.out_max_score,
     sum_score: r.out_sum_score,
     max_time_bonus_micros: r.out_max_time_bonus_micros,
@@ -388,6 +390,11 @@ async function liveFallback(
   if (namesResult.error) return new Response(JSON.stringify(fail(namesResult.error.message)), { status: 500, headers: CORS_HEADERS });
   const nameById = new Map<string, string>(namesResult.data.map((n) => [n.id, n.display_name]));
 
+  if (rows.length > 0 && !rows.some((r) => r.rnk <= limit)) {
+    // Diagnostic: rows came back but none passed the rank filter — log the
+    // raw shape so the Edge Function logs show what the RPC really returned.
+    console.error('leaderboard liveFallback: no row passed rank filter', JSON.stringify((rankedResult.data ?? [])[0]));
+  }
   const top = rows.filter((r) => r.rnk <= limit).map((r) => buildEntry(r, nameById.get(r.user_id) ?? 'Unknown'));
   const callerRow = rows.find((r) => r.is_caller) ?? null;
   let you:
