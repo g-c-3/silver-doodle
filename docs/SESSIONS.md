@@ -4,6 +4,27 @@ Most recent entry first.
 
 ---
 
+**2026-09-28 — Device-test queue completed; missing 'yesterday' leaderboard snapshot diagnosed and repaired; stale docs corrected**
+
+Session opened with a repo check against the previous session's changes: the three retired Edge Functions (`attempt-heartbeat`, `forfeit-stale-attempts`, `refresh-leaderboard-snapshot`) confirmed absent, `supabase/config.toml` confirmed to declare only `generate-daily-games` and `admob-ssv`, and the freebie/hearts and Attempt History changes confirmed present. `server/functions/README.md` was found still listing the two retired functions and the old daily/weekly leaderboard scopes; corrected. The Phase 6 slot-cap bullet in `ROADMAP.md` was found stale (unchecked, although Phase 8's atomic `start_attempt_slot` raising `DAILY_CAP_REACHED` had closed it; `start-attempt` maps it to a clean 400 and `app.js` shows the "come back tomorrow" message); checked off with the resolution recorded.
+
+**Device-test queue, all five items passed on a real device:**
+1. Freebie toast no longer reappears on the next level after a near-instant clear; hearts render the 3rd heart full and draining on a fresh level after all 3 lives were spent in an earlier level.
+2. Sign-in and a second attempt scored normally ("server-validated"). Forfeiting could not be exercised on-device: a closed app resumes the in-progress attempt into the ad-or-give-up prompt, so a dangling attempt is not created in normal use. Accepted as by-design (see DECISIONS.md). The forfeit paths themselves (a new attempt starting while another is in progress; the midnight sweep) remain untested on a device.
+3. All three leaderboard tabs rendered correctly, but a screen recording showed 'Yesterday' displaying "Loading…" on every open while 'All-time' rendered instantly from the client cache. Diagnosed via `select ... from leaderboard_snapshots`: only an `all-time` row existed. Cause: the 00:00 IST `generate-daily-games` run on 2026-09-28 executed before the corrected migration had been re-run, so the tables still carried the old `'daily'/'weekly'` scope constraint; the `'yesterday'` write was rejected (only logged, by design) while `'all-time'` was accepted. With no snapshot row, `leaderboard/index.ts` fell back to a live computation, which renders identically but is never cached (no `nextRefreshAt`). Repaired by running `refresh_leaderboard_snapshot('yesterday', '2026-09-27', '2026-09-28 18:30:00+00')` in the SQL Editor (returned 2); 'Yesterday' then opened with no loading state. The earlier note in this file that the 2 Yesterday players were "written by the 00:00 IST run" was wrong: they came from the live fallback. Not corrected retroactively above, flagged here.
+4. Stats day-cache and disabled today cell confirmed.
+5. Attempt History Today/All split and once-a-day cache confirmed.
+
+No application code changed this session. Files changed: `server/functions/README.md`, `docs/ROADMAP.md`, `docs/SESSIONS.md`, `docs/DECISIONS.md`.
+
+**Verification still owed:** confirm the 00:00 IST run on 2026-09-29 writes a `yesterday` row for period_key `2026-09-28` (`select scope, period_key, generated_at from leaderboard_snapshots order by generated_at desc`). That is the first end-to-end check of the cron path with the corrected constraint in place.
+
+**Open, requires the account holder:** custom SMTP (launch blocker); rotating the service-role key exposed in an old cron command; AdMob "Account not approved yet" status; privacy-policy effective date and contact email; 5 device screenshots; content-rating questionnaire; Play Console account; decision on Firebase Crashlytics/Analytics (implement for real, or formally drop and update docs).
+
+**Next session start point:** confirm the 2026-09-29 `yesterday` snapshot row exists, then take the first Phase 12 item the account holder supplies input for (privacy-policy placeholders or the Firebase decision).
+
+---
+
 **2026-09-27 — Two device bugfixes (freebie toast, hearts-across-levels) + two cost-reduction infra changes (event-driven forfeit, leaderboard/stats read caching)**
 
 Sign-in fix from the previous session confirmed passed on a real device.
