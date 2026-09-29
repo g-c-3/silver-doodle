@@ -1386,3 +1386,24 @@ a.primary {
 .bonus-copy {
   margin-bottom: 4px;
 }
+
+/* Profile "Check for update" result box (js/update-check.js). Added 2026-09-29. */
+.update-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 4px solid var(--accent-2);
+  border-radius: 12px;
+}
+.update-status.hidden { display: none; }
+.update-status-ok { border-left-color: #4cd98a; }
+.update-status-new { border-left-color: var(--accent); }
+.update-status-warn { border-left-color: var(--danger); }
+.update-status-icon { font-size: 22px; line-height: 1; }
+.update-status-title { font-weight: 600; }
+.update-status-sub { font-size: 0.85em; opacity: 0.7; margin-top: 2px; }
