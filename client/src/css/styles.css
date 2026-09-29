@@ -435,6 +435,18 @@ a.primary {
   gap: 10px;
 }
 
+/* FIXED 2026-09-29 (device screenshot): the type-to-confirm delete dialog's
+   input inherited only the global input[type="text"] rule, which sets no
+   width or margin -- so it rendered narrower than the card and sat flush
+   against the Cancel / Delete buttons underneath it. Scoped to inputs
+   inside a modal card so no other screen's inputs change. */
+.modal-card input[type="text"] {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 18px;
+}
+
 .modal-actions button {
   flex: 1;
   padding: 12px 14px;
