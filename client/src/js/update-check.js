@@ -1,9 +1,9 @@
 // update-check.js
 //
-// In-app update prompt for sideloaded builds. On every app open (and when
-// returning from the background, throttled) this asks GitHub for the repo's
-// "Latest" release, compares its build number to the installed one, and
-// offers to download the new APK if it is newer.
+// Manual "Check for update" for sideloaded builds. Runs ONLY when the player
+// taps the button on the Profile screen -- there is no automatic check on
+// app open or on resume (changed 2026-09-29 on request; the earlier version
+// checked on every launch).
 //
 // How the two numbers line up (no extra CI step needed):
 //   - Installed build: build-apk.yml -> patch_build_gradle.py sets Android
@@ -13,31 +13,26 @@
 //     "build-<run_number>" and marks it Latest (not pre-release), so
 //     GET /repos/<repo>/releases/latest always returns the newest build.
 //
-// Design rules:
-//   - Never a forced update: "Later" always works, and asks again next open.
-//   - Never interrupts a running attempt: if the game screen is showing, the
-//     prompt waits (cheap DOM poll, no network) until the player is out of it.
-//   - Every failure (offline, rate-limited, no release yet, odd payload) is
-//     silent -- an update check must never get in the way of playing.
-//   - No-ops outside the native app (e.g. the GitHub Pages copy), where
-//     there is no installed APK to compare against.
+// Behaviour:
+//   - Newer build exists  -> themed Update / Later dialog (never forced).
+//   - Already newest      -> inline "App is up to date (build N)." message.
+//   - Any failure         -> inline "Could not check for updates" message.
+//   - Outside the native app (e.g. the GitHub Pages copy) there is no
+//     installed APK to compare against, so an explanatory message is shown.
 //   - Score integrity is unaffected: this only ever opens a download link;
-//     the client still never reports anything about itself to the server.
+//     the client never reports anything about itself to the server.
+//   - Google Play constraint: an app may not update itself outside Play, so
+//     this file and its Profile button must be removed from any Play build.
 (function () {
   'use strict';
 
   const REPO = 'g-c-3/silver-doodle';
   const LATEST_URL = 'https://api.github.com/repos/' + REPO + '/releases/latest';
   const DOWNLOAD_PREFIX = 'https://github.com/' + REPO + '/';
-  const LAUNCH_DELAY_MS = 1500;          // let boot routing settle first
   const FETCH_TIMEOUT_MS = 6000;
-  const RESUME_THROTTLE_MS = 10 * 60 * 1000; // unauthenticated API = 60 req/h/IP
-  const DEFER_POLL_MS = 15000;
 
-  let lastCheckAt = 0;
-  let dismissedBuild = 0;   // "Later" applies to this app process only
+  let busy = false;       // a check (or its dialog) is in progress
   let promptOpen = false;
-  let deferTimer = null;
 
   function isNative() {
     return !!(window.Capacitor && window.Capacitor.isNativePlatform &&
@@ -60,7 +55,7 @@
     }
   }
 
-  /** @returns {Promise<{build:number, url:string}|null>} */
+  /** @returns {Promise<{build:number, url:string}|null>} null on any failure */
   async function fetchLatest() {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
@@ -86,13 +81,8 @@
     }
   }
 
-  function inGame() {
-    const g = document.getElementById('screen-game');
-    return !!(g && !g.classList.contains('hidden'));
-  }
-
   /** Builds the themed dialog from the app's existing modal classes. */
-  function showPrompt(latest, installed) {
+  function showPrompt(latest, installed, onClosed) {
     promptOpen = true;
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -130,11 +120,9 @@
     function close() {
       overlay.remove();
       promptOpen = false;
+      onClosed();
     }
-    later.addEventListener('click', () => {
-      dismissedBuild = latest.build;
-      close();
-    });
+    later.addEventListener('click', close);
     update.addEventListener('click', () => {
       close();
       // Capacitor's WebView hands non-app URLs to the system browser, which
@@ -144,42 +132,67 @@
     });
   }
 
-  /** Shows the prompt now, or waits until the player is out of a game. */
-  function promptWhenIdle(latest, installed) {
-    if (deferTimer) { clearInterval(deferTimer); deferTimer = null; }
-    if (promptOpen) return;
-    if (!inGame()) { showPrompt(latest, installed); return; }
-    deferTimer = setInterval(() => {
-      if (promptOpen) { clearInterval(deferTimer); deferTimer = null; return; }
-      if (inGame()) return;
-      clearInterval(deferTimer);
-      deferTimer = null;
-      showPrompt(latest, installed);
-    }, DEFER_POLL_MS);
-  }
-
-  async function check() {
-    if (!isNative() || promptOpen) return;
-    lastCheckAt = Date.now();
+  /**
+   * One manual check. Resolves to a status object; never throws.
+   * @returns {Promise<{status:'unsupported'|'error'|'up-to-date'|'available', installed?:number, latest?:{build:number,url:string}}>}
+   */
+  async function runCheck() {
+    if (!isNative()) return { status: 'unsupported' };
     const installed = await getInstalledBuild();
-    if (!(installed > 0)) return;
+    if (!(installed > 0)) return { status: 'error' };
     const latest = await fetchLatest();
-    if (!latest || !(latest.build > installed)) return;
-    if (latest.build <= dismissedBuild) return; // already said "Later" this run
-    promptWhenIdle(latest, installed);
+    if (!latest) return { status: 'error', installed: installed };
+    if (latest.build > installed) return { status: 'available', installed: installed, latest: latest };
+    return { status: 'up-to-date', installed: installed };
   }
 
-  // Every cold start.
-  setTimeout(check, LAUNCH_DELAY_MS);
+  // ---- Profile screen wiring -------------------------------------------
+  const btn = document.getElementById('profile-check-update-btn');
+  const statusEl = document.getElementById('profile-update-status');
+  if (!btn || !statusEl) return;
 
-  // Coming back from the background counts as "opening" the app too, but is
-  // throttled so quick app-switching can't burn through the API rate limit.
-  const App = appPlugin();
-  if (isNative() && App && App.addListener) {
-    App.addListener('appStateChange', (state) => {
-      if (state && state.isActive && Date.now() - lastCheckAt > RESUME_THROTTLE_MS) {
-        check();
-      }
-    });
+  function setStatus(text) {
+    statusEl.textContent = text;
+    statusEl.classList.toggle('hidden', !text);
+  }
+
+  btn.addEventListener('click', async () => {
+    if (busy || promptOpen) return;
+    busy = true;
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+    setStatus('');
+
+    const r = await runCheck();
+
+    function finish() {
+      busy = false;
+      btn.disabled = false;
+      btn.textContent = 'Check for update';
+    }
+
+    if (r.status === 'available') {
+      setStatus('Build ' + r.latest.build + ' is available (you have build ' + r.installed + ').');
+      finish();
+      showPrompt(r.latest, r.installed, function () {});
+      return;
+    }
+    if (r.status === 'up-to-date') {
+      setStatus('App is up to date (build ' + r.installed + ').');
+    } else if (r.status === 'unsupported') {
+      setStatus('Update checks only work in the installed app.');
+    } else {
+      setStatus('Could not check for updates. Check your connection and try again.');
+    }
+    finish();
+  });
+
+  // Clear a stale result whenever the Profile screen is re-shown, so an old
+  // "up to date" line never lingers after a new build has been published.
+  const profileScreen = document.getElementById('screen-profile');
+  if (profileScreen && window.MutationObserver) {
+    new MutationObserver(function () {
+      if (!profileScreen.classList.contains('hidden') && !busy) setStatus('');
+    }).observe(profileScreen, { attributes: true, attributeFilter: ['class'] });
   }
 })();
