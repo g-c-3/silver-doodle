@@ -166,6 +166,7 @@
   // ---- Profile screen wiring -------------------------------------------
   const btn = document.getElementById('profile-check-update-btn');
   const statusEl = document.getElementById('profile-update-status');
+  const NBSP = '\u00a0';
   if (!btn || !statusEl) return;
 
   /**
@@ -178,8 +179,14 @@
    */
   function setStatus(kind, icon, title, sub) {
     statusEl.textContent = '';
-    statusEl.className = 'update-status hidden';
-    if (!kind) return;
+    // No result: render an invisible placeholder card of identical structure
+    // so the space is reserved by the real layout (see .update-status-empty).
+    if (!kind) {
+      kind = 'empty';
+      icon = '✅';
+      title = NBSP;
+      sub = NBSP;
+    }
     statusEl.className = 'update-status update-status-' + kind;
 
     const ic = document.createElement('span');
@@ -190,15 +197,17 @@
     t.className = 'update-status-title';
     t.textContent = title;
     body.appendChild(t);
-    if (sub) {
-      const s = document.createElement('div');
-      s.className = 'update-status-sub';
-      s.textContent = sub;
-      body.appendChild(s);
-    }
+    // Always two lines (blank sub -> non-breaking space) so every state,
+    // including "empty", has the same height.
+    const s = document.createElement('div');
+    s.className = 'update-status-sub';
+    s.textContent = sub || NBSP;
+    body.appendChild(s);
     statusEl.appendChild(ic);
     statusEl.appendChild(body);
   }
+
+  setStatus(); // start with the reserved, invisible placeholder
 
   btn.addEventListener('click', async () => {
     if (busy || promptOpen) return;
