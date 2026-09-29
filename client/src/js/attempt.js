@@ -129,6 +129,14 @@ const Attempt = (() => {
   const LEVEL_SECONDS = 60;
   const BONUS_SECONDS = 30;
   const LIFE_EXTENSION_SECONDS = 60;
+  // 2026-09-29: how far past its deadline a timer segment may be when
+  // handleTimeout() finally fires before the next free segment is chained
+  // onto the OLD deadline (real time that passed while the app was
+  // closed/backgrounded keeps counting) instead of starting fresh from
+  // "now". Below this, it is ordinary tick jitter or a move that was still
+  // animating at expiry, and play is unchanged from before. See
+  // extendTimer().
+  const TIMEOUT_CATCHUP_GRACE_MS = 1000;
   const SWIPE_THRESHOLD_PX = 18; // pointer movement below this is treated as a tap, not a swipe
   const HINT_IDLE_MS = 5000; // no successful move for this long -> highlight all available moves
 
@@ -367,8 +375,23 @@ const Attempt = (() => {
     tick();
   }
 
-  function extendTimer(seconds) {
-    a.tickTarget = performance.now() + seconds * 1000;
+  // chainFromDeadline (free-life extensions only): BUG FIX 2026-09-29 --
+  // the next segment used to always start from "now". If the app had been
+  // closed/backgrounded, the expired heart was only noticed on return and
+  // the following heart then got a full fresh segment, so any amount of
+  // time away cost exactly one heart. Now, when the old deadline is more
+  // than TIMEOUT_CATCHUP_GRACE_MS in the past, the new segment is chained
+  // onto that old deadline instead -- so real elapsed time keeps counting
+  // across hearts, and handleTimeout() re-fires straight away for every
+  // further segment that also lapsed while away (the free time is 3
+  // minutes in total, however it is spent). Ad-life and freebie extensions
+  // deliberately keep starting from "now": they are granted at the moment
+  // the player takes the offer, not on a schedule.
+  function extendTimer(seconds, chainFromDeadline = false) {
+    const now = performance.now();
+    const overdueMs = typeof a.tickTarget === 'number' ? now - a.tickTarget : 0;
+    const startFrom = chainFromDeadline && overdueMs > TIMEOUT_CATCHUP_GRACE_MS ? a.tickTarget : now;
+    a.tickTarget = startFrom + seconds * 1000;
     stopTicking();
     tickHandle = setInterval(tick, 50);
   }
@@ -645,8 +668,14 @@ const Attempt = (() => {
     // The level timer never pauses (startTimer()/tick()), so real time that
     // passed while the tab was gone counts exactly as it would have if the
     // tab had simply stayed open.
-    const remainingMs = Math.max(0, saved.deadlineEpochMs - Date.now());
-    a.tickTarget = performance.now() + remainingMs;
+    // 2026-09-29: deliberately NOT clamped to >= 0 any more. If the saved
+    // deadline already passed while the app was closed, tickTarget must
+    // keep pointing at that real past moment so handleTimeout() ->
+    // extendTimer(..., true) can chain the following hearts onto it and
+    // work out how many of them also ran out while away. msRemaining()
+    // clamps at 0 for display and for the timeout check, so nothing else
+    // sees a negative value.
+    a.tickTarget = performance.now() + (saved.deadlineEpochMs - Date.now());
 
     setMessage('');
     renderBoard();
@@ -718,7 +747,7 @@ const Attempt = (() => {
       // reordering above — renderHud() persists a.tickTarget, which must
       // already reflect the extension, not the just-expired deadline that
       // triggered this branch.
-      extendTimer(LIFE_EXTENSION_SECONDS);
+      extendTimer(LIFE_EXTENSION_SECONDS, true);
       renderHud();
       // 2026-09-24 fix: a new segment beginning didn't reschedule the hint
       // timer, same bug as offerAdLife()'s two branches below — see that
