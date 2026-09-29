@@ -151,9 +151,36 @@
   const statusEl = document.getElementById('profile-update-status');
   if (!btn || !statusEl) return;
 
-  function setStatus(text) {
-    statusEl.textContent = text;
-    statusEl.classList.toggle('hidden', !text);
+  /**
+   * Renders the result box under the button. Called with no arguments to
+   * hide it. Built with createElement/textContent only (no innerHTML).
+   * @param {'ok'|'new'|'warn'} [kind]
+   * @param {string} [icon]
+   * @param {string} [title]
+   * @param {string} [sub]
+   */
+  function setStatus(kind, icon, title, sub) {
+    statusEl.textContent = '';
+    statusEl.className = 'update-status hidden';
+    if (!kind) return;
+    statusEl.className = 'update-status update-status-' + kind;
+
+    const ic = document.createElement('span');
+    ic.className = 'update-status-icon';
+    ic.textContent = icon;
+    const body = document.createElement('div');
+    const t = document.createElement('div');
+    t.className = 'update-status-title';
+    t.textContent = title;
+    body.appendChild(t);
+    if (sub) {
+      const s = document.createElement('div');
+      s.className = 'update-status-sub';
+      s.textContent = sub;
+      body.appendChild(s);
+    }
+    statusEl.appendChild(ic);
+    statusEl.appendChild(body);
   }
 
   btn.addEventListener('click', async () => {
@@ -161,7 +188,7 @@
     busy = true;
     btn.disabled = true;
     btn.textContent = 'Checking...';
-    setStatus('');
+    setStatus();
 
     const r = await runCheck();
 
@@ -172,17 +199,17 @@
     }
 
     if (r.status === 'available') {
-      setStatus('Build ' + r.latest.build + ' is available (you have build ' + r.installed + ').');
+      setStatus('new', '⬆️', 'New version available', 'Build ' + r.latest.build + ' (you have build ' + r.installed + ')');
       finish();
       showPrompt(r.latest, r.installed, function () {});
       return;
     }
     if (r.status === 'up-to-date') {
-      setStatus('App is up to date (build ' + r.installed + ').');
+      setStatus('ok', '✅', 'App is up to date', 'Build ' + r.installed);
     } else if (r.status === 'unsupported') {
-      setStatus('Update checks only work in the installed app.');
+      setStatus('warn', 'ℹ️', 'Update checks only work in the installed app');
     } else {
-      setStatus('Could not check for updates. Check your connection and try again.');
+      setStatus('warn', '⚠️', 'Could not check for updates', 'Check your connection and try again');
     }
     finish();
   });
@@ -192,7 +219,7 @@
   const profileScreen = document.getElementById('screen-profile');
   if (profileScreen && window.MutationObserver) {
     new MutationObserver(function () {
-      if (!profileScreen.classList.contains('hidden') && !busy) setStatus('');
+      if (!profileScreen.classList.contains('hidden') && !busy) setStatus();
     }).observe(profileScreen, { attributes: true, attributeFilter: ['class'] });
   }
 })();
