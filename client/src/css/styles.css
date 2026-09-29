@@ -1400,13 +1400,14 @@ a.primary {
   border-left: 4px solid var(--accent-2);
   border-radius: 12px;
 }
-/* Empty state keeps its space (visibility, not display:none) so the Profile
-   layout never jumps when a result appears. Height fits the 2-line card. */
-.update-status { box-sizing: border-box; min-height: 72px; }
-.update-status.hidden { display: flex; visibility: hidden; }
+/* Empty state: the card is rendered with invisible placeholder text, so it
+   always occupies exactly the height a real result needs at the current
+   font size, screen density and accessibility text scale. No fixed heights.
+   (Do not use the global .hidden class here: it is display:none !important.) */
+.update-status-empty { visibility: hidden; }
 .update-status-ok { border-left-color: #4cd98a; }
 .update-status-new { border-left-color: var(--accent); }
 .update-status-warn { border-left-color: var(--danger); }
-.update-status-icon { font-size: 22px; line-height: 1; }
+.update-status-icon { font-size: 1.4em; line-height: 1; }
 .update-status-title { font-weight: 600; }
 .update-status-sub { font-size: 0.85em; opacity: 0.7; margin-top: 2px; }
