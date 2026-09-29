@@ -4,6 +4,27 @@ Most recent entry first.
 
 ---
 
+**2026-09-30 -- Manual update check device-confirmed; result card, newest-build lookup and layout-jump fixes**
+
+**Verified on a device:** the Profile "Check for update" button works on build 92: it shows an up-to-date card with the build number, no layout shift occurs, and an earlier build was offered the newer build 89 through the Update / Later dialog.
+
+**Bugs fixed:**
+- Cause: the "App version" label sat inline beside the button and the result was a single plain line. Fix: label removed; result rendered as a card (icon, title, build line, coloured edge per state) with new `.update-status` styles. Why correct: matches the requested neat display and shows the build number on the up-to-date state.
+- Cause: an installed build 89 reported "up to date" while build 90 existed, so the "Latest" release flag did not track the build counter. Fix: the lookup lists the 10 most recent releases and takes the highest `build-N` tag, with the phone HTTP cache bypassed. Why correct: the build counter is the source of truth for ordering. Confirmed on build 92.
+- Cause: the result card's appearance shifted the vertically centred Profile layout; a first fix (fixed `min-height` with `visibility`) had no effect because the global `.hidden` rule is `display: none !important`. Fix: an invisible placeholder card of identical structure is always rendered, and no fixed pixel heights remain. Why correct: reserved height now follows the real content at any font size, density or text scale. Confirmed on a device.
+
+**Decisions made:** highest `build-N` tag defines the newest build; status UI reserves space with a same-structure placeholder rather than fixed sizes; see `DECISIONS.md`.
+
+**Files changed:** `client/src/js/update-check.js`, `client/src/index.html`, `client/src/css/styles.css`, and the four docs files. Nothing touches score validation, the Edge Functions, or the database.
+
+**Not verified / risks:** the "new version available" card and the failure card were not seen on a device in this session (only the up-to-date state and the dialog). The unauthenticated GitHub API limit of 60 requests per hour per IP still applies to taps. A sandbox lookup of the releases list was rate-limited, so the reason the Latest flag lagged was not inspected directly.
+
+**Still open, all needing the account holder:** privacy policy effective date and contact email (requested twice, not yet supplied); the Firebase decision (implement Analytics/Crashlytics or formally drop them); custom SMTP; service-role key rotation; AdMob account approval; Phase 12 screenshots, content rating and Play Console account; device tests for forfeit paths, PKCE/deep-link handoff, account deletion, the timer race at 0:00 and multi-round cascade animation. The self-update mechanism and Profile button must be removed from any Google Play build.
+
+**Next session start point:** finalize `privacy-policy.html` once the contact email and effective date are supplied, then continue the remaining Phase 12 items.
+
+---
+
 **2026-09-29 (later) -- Delete-dialog spacing confirmed; update check changed from automatic to a manual Profile button**
 
 **Verified:** the delete-account dialog spacing fix from earlier the same day was reported fixed on a device; no scrollable-dialog change was needed.

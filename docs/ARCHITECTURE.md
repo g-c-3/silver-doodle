@@ -33,10 +33,13 @@ client/
                         handoff — see Section 10
     js/early-auth-handoff.js  the other half of that same handoff — see Section 10 and Section 11
     js/update-check.js  (2026-09-29; made manual-only same day) runs only when the Profile screen's
-                        "Check for update" button is tapped: asks GitHub for the Latest release,
-                        offers the APK download if its build-N tag is newer than the installed
-                        versionCode, or reports "App is up to date (build N)." — sideload-only,
-                        never forced, no automatic check; see Section 11 and DECISIONS.md
+                        "Check for update" button is tapped: lists the 10 most recent GitHub
+                        releases, takes the highest build-N tag (not the "Latest" flag), offers the
+                        APK download if it is newer than the installed versionCode, or shows an
+                        "App is up to date / Build N" result card (a fixed-structure card whose empty
+                        state is an invisible placeholder, so the Profile layout never shifts) —
+                        sideload-only, never forced, no automatic check; see Section 11 and
+                        DECISIONS.md
                         (moved out of an inline <script> 2026-09-19 for the CSP; rebuilt 2026-09-20
                         after being found regressed to a previously-broken design — see DECISIONS.md)
   android/             Capacitor Android project — NOT committed; scaffolded fresh by build-apk.yml
