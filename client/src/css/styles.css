@@ -1400,7 +1400,10 @@ a.primary {
   border-left: 4px solid var(--accent-2);
   border-radius: 12px;
 }
-.update-status.hidden { display: none; }
+/* Empty state keeps its space (visibility, not display:none) so the Profile
+   layout never jumps when a result appears. Height fits the 2-line card. */
+.update-status { box-sizing: border-box; min-height: 72px; }
+.update-status.hidden { display: flex; visibility: hidden; }
 .update-status-ok { border-left-color: #4cd98a; }
 .update-status-new { border-left-color: var(--accent); }
 .update-status-warn { border-left-color: var(--danger); }
