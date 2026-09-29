@@ -336,6 +336,15 @@
       </div>
       <p id="profile-email-error" class="error hidden"></p>
 
+      <!-- Manual update check (replaces the old automatic check on every
+           app open). Wired in js/update-check.js. Sideload-only: remove for
+           any Google Play build. -->
+      <div class="field-block">
+        <span class="field-label">App version</span>
+        <button id="profile-check-update-btn" type="button" class="secondary">Check for update</button>
+        <p id="profile-update-status" class="muted hidden"></p>
+      </div>
+
       <button id="profile-sign-out-btn" type="button" class="danger">Sign out</button>
 
       <!-- ADDED 2026-09-19 (report-2.3, §5.10/§5.14): Google Play requires
