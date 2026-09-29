@@ -4,6 +4,24 @@ Most recent entry first.
 
 ---
 
+**2026-09-29 (later) -- Delete-dialog spacing confirmed; update check changed from automatic to a manual Profile button**
+
+**Verified:** the delete-account dialog spacing fix from earlier the same day was reported fixed on a device; no scrollable-dialog change was needed.
+
+**Built (requested directly), manual update check:** the automatic check on every app open was replaced by a **Check for update** button in the Profile screen. `client/src/js/update-check.js` was rewritten: the launch and return-from-background triggers, the in-game deferral poll and the "Later" memory were removed, and the check now runs only on a tap. Results are shown inline under the button: current build → "App is up to date (build N)."; newer build → "Build X is available (you have build N)." plus the existing Update / Later dialog; failure → a short retry message; outside the native app → an explanatory message. The button shows "Checking..." and is disabled while a request is in flight, and the status line clears when Profile is reopened. `client/src/index.html` gained the "App version" block (`profile-check-update-btn`, `profile-update-status`). `app.js` needed no change because the script binds to the button by id. The Latest-release publishing in `build-apk.yml` and the CSP are unchanged.
+
+**Decisions made:** the update check is manual-only; see `DECISIONS.md`.
+
+**Files changed:** `client/src/js/update-check.js`, `client/src/index.html`, and the four docs files. Nothing touches score validation, the Edge Functions, or the database.
+
+**Not verified / risks:** the change was syntax-checked only; it has not been built by CI or run on a device. Builds installed before this one keep the old automatic check until replaced by hand. The GitHub API limit of 60 unauthenticated requests per hour per IP still applies to taps and would surface as the inline failure message.
+
+**Still open, all needing the account holder:** privacy policy effective date and contact email (requested, not yet supplied); the Firebase decision (implement Analytics/Crashlytics or formally drop them); custom SMTP; service-role key rotation; AdMob account approval; Phase 12 screenshots, content rating and Play Console account; device tests for forfeit paths, PKCE/deep-link handoff, account deletion, the timer race at 0:00, multi-round cascade animation, and the new Profile update button.
+
+**Next session start point:** device-test the Profile "Check for update" button on a CI-built APK, then take the privacy policy once the contact email and effective date are supplied.
+
+---
+
 **2026-09-29 — Midnight snapshot verified; in-app update prompt and Latest-release publishing built; timer time-away bug fixed; delete-dialog spacing fixed**
 
 **Verified:** the first scheduled run after the 2026-09-28 constraint repair wrote its `yesterday` snapshot (`period_key` 2026-09-28, generated 18:35:04 UTC = 00:05 IST) and the `all-time` row, via a single read-only query of `leaderboard_snapshots`. Repo state was checked beforehand: `supabase/config.toml` declares only `generate-daily-games` and `admob-ssv`, and `generate-daily-games/index.ts` writes `yesterday` with `dayBeforeIst(gameDate)`.

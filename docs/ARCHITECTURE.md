@@ -32,9 +32,11 @@ client/
     js/deep-link.js    completes magic-link sign-in inside the native app via a custom URL scheme
                         handoff — see Section 10
     js/early-auth-handoff.js  the other half of that same handoff — see Section 10 and Section 11
-    js/update-check.js  (2026-09-29) on each app open, asks GitHub for the Latest release and offers the
-                        APK download if its build-N tag is newer than the installed versionCode —
-                        sideload-only, never forced; see Section 11 and DECISIONS.md
+    js/update-check.js  (2026-09-29; made manual-only same day) runs only when the Profile screen's
+                        "Check for update" button is tapped: asks GitHub for the Latest release,
+                        offers the APK download if its build-N tag is newer than the installed
+                        versionCode, or reports "App is up to date (build N)." — sideload-only,
+                        never forced, no automatic check; see Section 11 and DECISIONS.md
                         (moved out of an inline <script> 2026-09-19 for the CSP; rebuilt 2026-09-20
                         after being found regressed to a previously-broken design — see DECISIONS.md)
   android/             Capacitor Android project — NOT committed; scaffolded fresh by build-apk.yml
