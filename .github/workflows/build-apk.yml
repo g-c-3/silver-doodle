@@ -272,11 +272,16 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}
-          # Distribution is manual APK sideload for now (docs/ROADMAP.md
-          # Phase 12 gates Play Store submission on the privacy policy page
-          # and production ad unit IDs) -- prerelease keeps every build out
-          # of the repo's "Latest release" banner until that's ready.
-          prerelease: true
+          # CHANGED 2026-09-29: every build is now published as a normal
+          # release and explicitly marked Latest (was prerelease: true).
+          # client/src/js/update-check.js calls GET /releases/latest on each
+          # app open, and that endpoint never returns pre-releases -- so the
+          # newest build must be Latest for installed apps to see it. Tag and
+          # title keep counting up with the run number (build-81, Build 81...).
+          # Distribution is still manual sideload (Play submission remains
+          # gated on Phase 12), so "Latest" here means "latest sideload".
+          prerelease: false
+          make_latest: "true"
           files: ${{ steps.apk.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
