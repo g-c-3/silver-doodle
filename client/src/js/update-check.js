@@ -10,8 +10,9 @@
 //     versionCode = github.run_number, and @capacitor/app's getInfo().build
 //     returns exactly that versionCode.
 //   - Latest build: build-apk.yml publishes each APK as release tag
-//     "build-<run_number>" and marks it Latest (not pre-release), so
-//     GET /repos/<repo>/releases/latest always returns the newest build.
+//     "build-<run_number>" (not pre-release). The check lists the 10 most
+//     recent releases and takes the highest build-N tag, so it does not
+//     depend on GitHub's "Latest" flag.
 //
 // Behaviour:
 //   - Newer build exists  -> themed Update / Later dialog (never forced).
@@ -27,7 +28,7 @@
   'use strict';
 
   const REPO = 'g-c-3/silver-doodle';
-  const LATEST_URL = 'https://api.github.com/repos/' + REPO + '/releases/latest';
+  const RELEASES_URL = 'https://api.github.com/repos/' + REPO + '/releases?per_page=10';
   const DOWNLOAD_PREFIX = 'https://github.com/' + REPO + '/';
   const FETCH_TIMEOUT_MS = 6000;
 
@@ -55,25 +56,41 @@
     }
   }
 
-  /** @returns {Promise<{build:number, url:string}|null>} null on any failure */
+  /**
+   * Finds the newest published build. Looks at the recent release list and
+   * takes the highest build-N tag (not GitHub's "Latest" flag, whose ordering
+   * can lag or disagree with the build counter when builds land close together).
+   * @returns {Promise<{build:number, url:string}|null>} null on any failure
+   */
   async function fetchLatest() {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     try {
-      const res = await fetch(LATEST_URL, {
+      const res = await fetch(RELEASES_URL, {
         headers: { Accept: 'application/vnd.github+json' },
+        cache: 'no-store', // skip the WebView's own HTTP cache
         signal: ctrl.signal,
       });
-      if (!res.ok) return null; // 404 (no non-prerelease yet), 403 (rate limit), ...
-      const data = await res.json();
-      const m = /^build-(\d+)$/.exec(data.tag_name || '');
-      if (!m) return null;
-      const apk = (data.assets || []).find((a) => /\.apk$/i.test(a.name || ''));
+      if (!res.ok) return null; // 403 (rate limit), 5xx, ...
+      const list = await res.json();
+      if (!Array.isArray(list)) return null;
+
+      let best = null;
+      for (const rel of list) {
+        if (rel.draft || rel.prerelease) continue;
+        const m = /^build-(\d+)$/.exec(rel.tag_name || '');
+        if (!m) continue;
+        const build = parseInt(m[1], 10);
+        if (!best || build > best.build) best = { build: build, rel: rel };
+      }
+      if (!best) return null;
+
+      const apk = (best.rel.assets || []).find((a) => /\.apk$/i.test(a.name || ''));
       // Prefer the APK itself; fall back to the release page.
-      const url = (apk && apk.browser_download_url) || data.html_url;
+      const url = (apk && apk.browser_download_url) || best.rel.html_url;
       // Only ever open links that point back into this repo.
       if (typeof url !== 'string' || url.indexOf(DOWNLOAD_PREFIX) !== 0) return null;
-      return { build: parseInt(m[1], 10), url: url };
+      return { build: best.build, url: url };
     } catch (e) {
       return null;
     } finally {
@@ -207,7 +224,7 @@
     if (r.status === 'up-to-date') {
       setStatus('ok', '✅', 'App is up to date', 'Build ' + r.installed);
     } else if (r.status === 'unsupported') {
-      setStatus('warn', 'ℹ️', 'Update checks only work in the installed app');
+      setStatus('warn', 'ℹ️', 'Update check unavailable', 'Only works in the installed app');
     } else {
       setStatus('warn', '⚠️', 'Could not check for updates', 'Check your connection and try again');
     }
