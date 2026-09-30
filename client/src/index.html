@@ -345,7 +345,12 @@
         <button id="profile-reminders-toggle-btn" type="button" class="secondary">Turn on reminders</button>
         <button id="profile-reminders-test-btn" type="button" class="link hidden">Send me a test</button>
       </div>
-      <p id="profile-reminders-error" class="error hidden"></p>
+      <!-- Always rendered (never .hidden) so the vertically-centred Profile
+           screen does not jump when a message appears: the paragraph
+           reserves two lines via .reminders-note, see styles.css. Neutral
+           colour for info (e.g. "Test sent"), .reminders-note-error only
+           for real problems. -->
+      <p id="profile-reminders-note" class="reminders-note" role="status"></p>
 
       <!-- Manual update check (replaces the old automatic check on every
            app open). Wired in js/update-check.js. Sideload-only: remove for
