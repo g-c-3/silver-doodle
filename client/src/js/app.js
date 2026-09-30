@@ -139,6 +139,7 @@ function renderProfileScreen() {
   document.getElementById('profile-email-display').textContent = state.profile.email;
   setError('profile-name-error', '');
   setError('profile-email-error', '');
+  renderRemindersBlock();
 }
 
 async function routeAfterAuth(session) {
@@ -151,6 +152,11 @@ async function routeAfterAuth(session) {
     return;
   }
   state.profile = profile;
+  // Daily reminders: re-sync the 7-day plan on every sign-in/app open (no-op
+  // unless the player opted in). Fire-and-forget: never blocks routing.
+  if (window.Notifs) {
+    window.Notifs.init(session.user.id, profile.display_name, Profile.looksLikeDefaultName(profile));
+  }
   if (Profile.looksLikeDefaultName(profile)) {
     document.getElementById('name-setup-input').value = '';
     showScreen('screen-name-setup');
@@ -167,6 +173,7 @@ async function routeAfterAuth(session) {
     if (!resumed) {
       renderHome();
       showScreen('screen-home');
+      maybeOfferRemindersPrompt();
     }
   }
 }
@@ -215,13 +222,16 @@ document.getElementById('name-setup-form').addEventListener('submit', async (e) 
     return;
   }
   state.profile.display_name = name.trim();
+  if (window.Notifs) window.Notifs.onNameChanged(state.profile.display_name);
   renderHome();
   showScreen('screen-home');
+  maybeOfferRemindersPrompt();
 });
 
 document.getElementById('name-setup-skip-btn').addEventListener('click', () => {
   renderHome();
   showScreen('screen-home');
+  maybeOfferRemindersPrompt();
 });
 
 // ---- Home ----
@@ -359,6 +369,7 @@ document.getElementById('profile-name-form').addEventListener('submit', async (e
     return;
   }
   state.profile.display_name = name.trim();
+  if (window.Notifs) window.Notifs.onNameChanged(state.profile.display_name);
   renderHome();
   setError('profile-name-error', 'Saved.');
 });
@@ -485,6 +496,9 @@ function showDeleteConfirm() {
 }
 
 async function signOutToEmailScreen() {
+  // Drop this player's pending reminders first: they carry the display name
+  // and must not keep firing for whoever uses the device next.
+  if (window.Notifs) await window.Notifs.clearAll();
   await Auth.signOut();
   state.session = null;
   state.profile = null;
@@ -546,6 +560,84 @@ document.getElementById('profile-delete-account-btn').addEventListener('click', 
   // rather than assuming deleteUser() already invalidated local storage.
   await signOutToEmailScreen();
 });
+
+// ---- Daily reminders (js/notifications.js) ----
+// Two personalised local notifications a day at random times. Everything
+// here is a no-op outside the native app (window.Notifs.isSupported() false).
+
+function renderRemindersBlock() {
+  const block = document.getElementById('profile-reminders-block');
+  if (!block) return;
+  if (!window.Notifs || !window.Notifs.isSupported()) {
+    block.classList.add('hidden');
+    return;
+  }
+  block.classList.remove('hidden');
+  const on = window.Notifs.isEnabled();
+  document.getElementById('profile-reminders-status').textContent = on
+    ? 'On — two friendly nudges a day, at random times.'
+    : 'Off — no reminders will be sent.';
+  document.getElementById('profile-reminders-toggle-btn').textContent = on ? 'Turn off reminders' : 'Turn on reminders';
+  document.getElementById('profile-reminders-test-btn').classList.toggle('hidden', !on);
+  setError('profile-reminders-error', '');
+}
+
+const REMINDERS_DENIED_MSG =
+  'Notifications are blocked for this app. Turn them on in Android Settings → Apps → Match Emojis Daily → Notifications, then try again.';
+
+document.getElementById('profile-reminders-toggle-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('profile-reminders-toggle-btn');
+  setError('profile-reminders-error', '');
+  btn.disabled = true;
+  try {
+    if (window.Notifs.isEnabled()) {
+      await window.Notifs.disable();
+    } else {
+      const result = await window.Notifs.enable();
+      if (result === 'denied') setError('profile-reminders-error', REMINDERS_DENIED_MSG);
+    }
+  } finally {
+    btn.disabled = false;
+    const keepError = document.getElementById('profile-reminders-error').textContent;
+    renderRemindersBlock();
+    if (keepError) setError('profile-reminders-error', keepError);
+  }
+});
+
+document.getElementById('profile-reminders-test-btn').addEventListener('click', async () => {
+  setError('profile-reminders-error', '');
+  const ok = await window.Notifs.sendTest();
+  setError('profile-reminders-error', ok
+    ? 'Test sent — it should arrive in a few seconds. Leave the app to see it.'
+    : 'Could not send a test. Check that notifications are allowed for this app.');
+});
+
+// One-time opt-in on first arrival at Home. The OS permission dialog only
+// appears after the player taps "Turn on" here.
+function maybeOfferRemindersPrompt() {
+  if (!window.Notifs || !window.Notifs.shouldOfferPrompt()) return;
+  window.Notifs.markPromptSeen();
+  const modal = document.getElementById('reminders-prompt-modal');
+  const okBtn = document.getElementById('reminders-prompt-ok-btn');
+  const laterBtn = document.getElementById('reminders-prompt-later-btn');
+  modal.classList.remove('hidden');
+
+  function close() {
+    modal.classList.add('hidden');
+    okBtn.removeEventListener('click', onOk);
+    laterBtn.removeEventListener('click', onLater);
+  }
+  async function onOk() {
+    close();
+    const result = await window.Notifs.enable();
+    if (result === 'denied') await showAlert(REMINDERS_DENIED_MSG, 'warning');
+  }
+  function onLater() {
+    close();
+  }
+  okBtn.addEventListener('click', onOk);
+  laterBtn.addEventListener('click', onLater);
+}
 
 // ---- Email change ----
 
