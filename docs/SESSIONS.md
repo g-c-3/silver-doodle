@@ -4,6 +4,20 @@ Most recent entry first.
 
 ---
 
+**2026-10-01 -- Daily reminder notifications built (local, random twice a day, personalised, emoji-board image)**
+
+**Built:** a twice-a-day reminder system. `client/src/js/notifications.js` (new) plans 7 days ahead, exactly two local notifications per day at random minutes within a late-morning and an evening window, each titled with the player's display name, a randomly chosen message, and one of six emoji-board images showing a match one swap away. Opt-in via a one-time Home prompt and a Profile toggle (with a "Send me a test" control); permission is requested only after opting in. Sign-out cancels pending reminders; renaming updates them. `index.html`, `app.js` and `package.json` (`@capacitor/local-notifications` 8.3.1) were edited. `gen_notification_art.py` (new) renders the artwork in CI; `build-apk.yml` runs it and now also triggers on changes to the two script files; `patch_android_manifest.py` removes the exact-alarm permission.
+
+**Verified here:** scheduling logic in Node against a mocked plugin (two per day, stable times, rename, per-player opt-in); all six board images rendered and visually inspected; the manifest patch run against a simulated manifest; both JS files and the workflow YAML parse. **Not verified:** a real CI run, and any device behaviour.
+
+**Decisions made:** local notifications rather than push; inexact alarms with exact-alarm permission removed; square 192x192 board thumbnail instead of a wide banner (plugin has no Android big-picture style; a native patch could not be tested in CI-only workflow). See DECISIONS.md 2026-10-01.
+
+**Earlier in the session:** the `Go` briefing was run. The Phase 12 privacy policy still has two unfilled placeholders (effective date, contact email) and remains the first incomplete roadmap item.
+
+**Next session start point:** commit the files from this session, run the CI build, then on a device use Profile -> Daily reminders -> Turn on, send a test, and report the outcome; afterwards return to filling the two `privacy-policy.html` placeholders (and add a line about on-device reminders).
+
+---
+
 **2026-09-30 -- Manual update check device-confirmed; result card, newest-build lookup and layout-jump fixes**
 
 **Verified on a device:** the Profile "Check for update" button works on build 92: it shows an up-to-date card with the build number, no layout shift occurs, and an earlier build was offered the newer build 89 through the Update / Later dialog.

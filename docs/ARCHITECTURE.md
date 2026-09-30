@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-20 — a two-round external security review worked through nearly end to end (score integrity, leaderboard scaling moved to SQL, client timer race, CDN/CSP hardening, emoji compatibility, auth flow switched to PKCE), a new account-deletion feature built, and several documentation-vs-reality gaps found and corrected along the way: the app icon's real source (externally-sourced, not the originally-designed vector art), Firebase never actually being shipped despite the stack table saying otherwise, and a deep-link handoff mechanism found regressed back to a design already known broken by real on-device testing. See Section 12 and DECISIONS.md's 2026-09-20 entry for the full detail.
+Last updated: 2026-10-01 — daily reminder notifications added (repo layout, Section 11). Prior update 2026-09-20 — a two-round external security review worked through nearly end to end (score integrity, leaderboard scaling moved to SQL, client timer race, CDN/CSP hardening, emoji compatibility, auth flow switched to PKCE), a new account-deletion feature built, and several documentation-vs-reality gaps found and corrected along the way: the app icon's real source (externally-sourced, not the originally-designed vector art), Firebase never actually being shipped despite the stack table saying otherwise, and a deep-link handoff mechanism found regressed back to a design already known broken by real on-device testing. See Section 12 and DECISIONS.md's 2026-09-20 entry for the full detail.
 
 ## 1. Stack
 
@@ -42,11 +42,19 @@ client/
                         DECISIONS.md
                         (moved out of an inline <script> 2026-09-19 for the CSP; rebuilt 2026-09-20
                         after being found regressed to a previously-broken design — see DECISIONS.md)
+    js/notifications.js (2026-10-01) twice-a-day personalised LOCAL reminder notifications via
+                        @capacitor/local-notifications: 7-day rolling plan, exactly two per day at random
+                        minutes inside a late-morning and an evening window, display-name greeting,
+                        random message, emoji-board image. Opt-in (one-time prompt on Home + Profile
+                        toggle); permission requested only after opt-in. No server, Firebase or FCM
+                        involvement; score/attempt/ad logic untouched. Exposed as window.Notifs.
   android/             Capacitor Android project — NOT committed; scaffolded fresh by build-apk.yml
                         on every CI run instead (see DECISIONS.md's 2026-09-16 "android/ generated
                         fresh in CI" entry — the short version: committing it would mean uploading
                         ~50+ generated native files by hand through GitHub's mobile web UI)
   assets/
+    (notification artwork is not committed: .github/workflows/scripts/gen_notification_art.py
+     renders notif_board_1..6.png and ic_stat_match.xml into the generated android/ res/ on each CI run)
     icon.svg           app icon source (Phase 11) — every density/adaptive-icon variant regenerated
                         from this by @capacitor/assets on each CI run, same "source committed,
                         generated output is not" pattern as android/ itself. As of 2026-09-19
@@ -307,6 +315,9 @@ Runner specifics that weren't obvious until a real run failed on them, in case t
 **`supabase/config.toml`.** Pins `verify_jwt = false` explicitly for `forfeit-stale-attempts` and `generate-daily-games` — both cron-only, both previously relying on a Dashboard-only toggle a CLI deploy could otherwise have silently reset. See DECISIONS.md for why this matters.
 
 GitHub Actions handles all building; no local terminal build steps are ever required.
+
+**Reminder notification build steps (2026-10-01).** `build-apk.yml` gained a step, after app-icon generation, that installs `fonts-noto-color-emoji` and Pillow and runs `gen_notification_art.py`, which writes six 192x192 board images (`drawable-nodpi/notif_board_N.png`) and a white status-bar silhouette (`drawable/ic_stat_match.xml`) into the generated Android project; it fails the build if the font or Pillow is missing. `patch_android_manifest.py` additionally removes the plugin-merged `SCHEDULE_EXACT_ALARM` permission (`tools:node="remove"`) because reminders use inexact alarms. `POST_NOTIFICATIONS` and `RECEIVE_BOOT_COMPLETED` come from the plugin's own manifest. Both scripts are now in the workflow's `paths` triggers.
+
 
 ## 12. Play Store Prep (Phase 12)
 
