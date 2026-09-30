@@ -140,6 +140,7 @@ function renderProfileScreen() {
   setError('profile-name-error', '');
   setError('profile-email-error', '');
   renderRemindersBlock();
+  setReminderNote('');
 }
 
 async function routeAfterAuth(session) {
@@ -579,37 +580,45 @@ function renderRemindersBlock() {
     : 'Off — no reminders will be sent.';
   document.getElementById('profile-reminders-toggle-btn').textContent = on ? 'Turn off reminders' : 'Turn on reminders';
   document.getElementById('profile-reminders-test-btn').classList.toggle('hidden', !on);
-  setError('profile-reminders-error', '');
+}
+
+// Message line under the reminders controls. Neutral by default; isError
+// switches to the danger colour. The element is never hidden (see index.html)
+// so the layout stays put.
+function setReminderNote(message, isError) {
+  const el = document.getElementById('profile-reminders-note');
+  el.textContent = message || '';
+  el.classList.toggle('reminders-note-error', !!(message && isError));
 }
 
 const REMINDERS_DENIED_MSG =
-  'Notifications are blocked for this app. Turn them on in Android Settings → Apps → Match Emojis Daily → Notifications, then try again.';
+  'Notifications are blocked. Enable them in Android Settings → Apps → Match Emojis Daily → Notifications.';
 
 document.getElementById('profile-reminders-toggle-btn').addEventListener('click', async () => {
   const btn = document.getElementById('profile-reminders-toggle-btn');
-  setError('profile-reminders-error', '');
+  setReminderNote('');
   btn.disabled = true;
   try {
     if (window.Notifs.isEnabled()) {
       await window.Notifs.disable();
     } else {
       const result = await window.Notifs.enable();
-      if (result === 'denied') setError('profile-reminders-error', REMINDERS_DENIED_MSG);
+      if (result === 'denied') setReminderNote(REMINDERS_DENIED_MSG, true);
     }
   } finally {
     btn.disabled = false;
-    const keepError = document.getElementById('profile-reminders-error').textContent;
     renderRemindersBlock();
-    if (keepError) setError('profile-reminders-error', keepError);
   }
 });
 
 document.getElementById('profile-reminders-test-btn').addEventListener('click', async () => {
-  setError('profile-reminders-error', '');
+  setReminderNote('');
   const ok = await window.Notifs.sendTest();
-  setError('profile-reminders-error', ok
-    ? 'Test sent — it should arrive in a few seconds. Leave the app to see it.'
-    : 'Could not send a test. Check that notifications are allowed for this app.');
+  if (ok) {
+    setReminderNote('Test sent — it should arrive in a few seconds. Leave the app to see it.', false);
+  } else {
+    setReminderNote('Could not send a test. Check that notifications are allowed for this app.', true);
+  }
 });
 
 // One-time opt-in on first arrival at Home. The OS permission dialog only
