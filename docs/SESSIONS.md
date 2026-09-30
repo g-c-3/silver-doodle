@@ -16,6 +16,8 @@ Most recent entry first.
 
 **Bug fixed after first device test (build 99):** cause: the notification plugin defaults `isExactNotification` to true, and without exact-alarm permission it opens the system "Alarms & reminders" settings page on each schedule call. Fix: `isExactNotification: false` set on every reminder in `notifications.js`. Why correct: the plugin source skips the settings redirect when no notification in the batch requests an exact alarm. Not yet re-tested on a device.
 
+**UI fix after the second device check:** the "Test sent" confirmation rendered in the red error style and its appearance shifted the vertically-centred Profile screen by one line. The message now uses a neutral muted style (red only for real problems such as blocked notifications) in an always-rendered `.reminders-note` paragraph that reserves two lines in `em`, following the placeholder rule in DECISIONS.md 2026-09-30.
+
 **Next session start point:** commit the files from this session, run the CI build, then on a device use Profile -> Daily reminders -> Turn on, send a test, and report the outcome; afterwards return to filling the two `privacy-policy.html` placeholders (and add a line about on-device reminders).
 
 ---
