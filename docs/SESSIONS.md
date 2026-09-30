@@ -14,6 +14,8 @@ Most recent entry first.
 
 **Earlier in the session:** the `Go` briefing was run. The Phase 12 privacy policy still has two unfilled placeholders (effective date, contact email) and remains the first incomplete roadmap item.
 
+**Bug fixed after first device test (build 99):** cause: the notification plugin defaults `isExactNotification` to true, and without exact-alarm permission it opens the system "Alarms & reminders" settings page on each schedule call. Fix: `isExactNotification: false` set on every reminder in `notifications.js`. Why correct: the plugin source skips the settings redirect when no notification in the batch requests an exact alarm. Not yet re-tested on a device.
+
 **Next session start point:** commit the files from this session, run the CI build, then on a device use Profile -> Daily reminders -> Turn on, send a test, and report the outcome; afterwards return to filling the two `privacy-policy.html` placeholders (and add a line about on-device reminders).
 
 ---
