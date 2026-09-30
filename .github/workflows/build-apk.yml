@@ -57,6 +57,8 @@ on:
       - "supabase/migrations/**" # schema the client depends on shifting is a reason to rebuild too
       - ".github/workflows/build-apk.yml"
       - ".github/workflows/scripts/patch_build_gradle.py"
+      - ".github/workflows/scripts/patch_android_manifest.py"
+      - ".github/workflows/scripts/gen_notification_art.py"
   workflow_dispatch:
     inputs:
       use_production_ad_unit:
@@ -219,6 +221,21 @@ jobs:
           npx @capacitor/assets generate --android \
             --androidProject android --assetPath assets \
             --iconBackgroundColor '#14121f' --iconBackgroundColorDark '#14121f'
+
+      - name: Generate reminder-notification artwork
+        # ADDED 2026-10-01: renders the six "board with a match waiting"
+        # images and the status-bar icon used by client/src/js/
+        # notifications.js straight into the generated Android res/ folder
+        # (nothing binary is committed -- same pattern as the app icon).
+        # Fails the build if the emoji font or Pillow is missing rather
+        # than shipping notifications that point at drawables that do not
+        # exist. Runs after `cap sync` so android/ exists.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-noto-color-emoji fontconfig
+          fc-cache -f
+          python3 -m pip install --quiet pillow
+          python3 .github/workflows/scripts/gen_notification_art.py
 
       - name: Decode release keystore
         run: |
