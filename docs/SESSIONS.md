@@ -18,7 +18,9 @@ Most recent entry first.
 
 **UI fix after the second device check:** the "Test sent" confirmation rendered in the red error style and its appearance shifted the vertically-centred Profile screen by one line. The message now uses a neutral muted style (red only for real problems such as blocked notifications) in an always-rendered `.reminders-note` paragraph that reserves two lines in `em`, following the placeholder rule in DECISIONS.md 2026-09-30.
 
-**Next session start point:** commit the files from this session, run the CI build, then on a device use Profile -> Daily reminders -> Turn on, send a test, and report the outcome; afterwards return to filling the two `privacy-policy.html` placeholders (and add a line about on-device reminders).
+**Device-confirmed at session end:** the test notification works end to end and both UI fixes behaved correctly.
+
+**Next session start point:** fill the two `privacy-policy.html` placeholders (effective date and contact email, both needed from the owner) and add a line about on-device reminder notifications; meanwhile, note whether the scheduled reminders arrive twice a day at varying times.
 
 ---
 
