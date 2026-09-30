@@ -336,6 +336,17 @@
       </div>
       <p id="profile-email-error" class="error hidden"></p>
 
+      <!-- Daily reminders (js/notifications.js). Native app only: the whole
+           block stays hidden in a plain browser. Two personalised local
+           notifications a day at random times; nothing leaves the device. -->
+      <div id="profile-reminders-block" class="field-block hidden">
+        <span class="field-label">Daily reminders</span>
+        <p id="profile-reminders-status" class="value muted"></p>
+        <button id="profile-reminders-toggle-btn" type="button" class="secondary">Turn on reminders</button>
+        <button id="profile-reminders-test-btn" type="button" class="link hidden">Send me a test</button>
+      </div>
+      <p id="profile-reminders-error" class="error hidden"></p>
+
       <!-- Manual update check (replaces the old automatic check on every
            app open). Wired in js/update-check.js. Sideload-only: remove for
            any Google Play build. -->
@@ -436,6 +447,20 @@
       <div class="modal-actions">
         <button id="confirm-modal-cancel-btn" type="button" class="secondary">Cancel</button>
         <button id="confirm-modal-ok-btn" type="button" class="danger">Sign out</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- One-time opt-in for daily reminders, shown once per player on first
+       arrival at Home (native app only). The OS permission dialog appears
+       only after "Turn on" — never on launch. See js/notifications.js. -->
+  <div id="reminders-prompt-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="alert-icon-badge success">🔔</div>
+      <p class="modal-message">Want two friendly nudges a day? We'll say hi by name and show you a board with a match waiting. You can turn this off any time in Profile.</p>
+      <div class="modal-actions">
+        <button id="reminders-prompt-later-btn" type="button" class="secondary">Not now</button>
+        <button id="reminders-prompt-ok-btn" type="button" class="primary">Turn on</button>
       </div>
     </div>
   </div>
@@ -610,6 +635,7 @@
   <script src="js/stats.js"></script>
   <script src="js/game-engine.js"></script>
   <script src="js/attempt.js"></script>
+  <script src="js/notifications.js"></script>
   <script src="js/app.js"></script>
   <script src="js/update-check.js"></script>
 </body>
