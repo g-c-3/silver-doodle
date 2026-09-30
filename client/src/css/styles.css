@@ -591,6 +591,22 @@ a.primary {
   display: none;
 }
 
+/* Daily reminders message area (Profile). Reserves two lines of its own
+   font size (em, so it follows text scaling) and is never display:none, so
+   showing/clearing a message never moves the rest of the centred screen.
+   Info is muted; only genuine problems use the danger colour. */
+.reminders-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  min-height: 2.8em;
+  color: var(--muted);
+}
+
+.reminders-note-error {
+  color: var(--danger);
+}
+
 /* ---- Phase 9: all-time stats & calendar ---- */
 
 .stats-column {
