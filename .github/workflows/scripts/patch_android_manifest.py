@@ -91,5 +91,32 @@ if application_marker not in text:
     )
 text = text.replace(application_marker, application_marker + admob_meta_data, 1)
 
+# ---- 3. Strip SCHEDULE_EXACT_ALARM (daily reminders, 2026-10-01) ----
+# @capacitor/local-notifications' own manifest declares this permission and
+# it merges into the app. Reminders (client/src/js/notifications.js) are
+# deliberately inexact (random minute in a window, allowWhileIdle), so the
+# permission is unused -- and on Google Play it would trigger an exact-alarm
+# declaration in Play Console. tools:node="remove" drops it at manifest merge.
+if 'xmlns:tools=' not in text:
+    root_marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+    if root_marker not in text:
+        sys.exit(
+            "PATCH FAILED: <manifest xmlns:android=...> root tag not found in "
+            "the expected shape -- Capacitor's template shape changed, this "
+            "script needs updating."
+        )
+    text = text.replace(
+        root_marker,
+        root_marker + '\n    xmlns:tools="http://schemas.android.com/tools"',
+        1,
+    )
+remove_perm = (
+    '\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" '
+    'tools:node="remove" />\n'
+)
+if "</manifest>" not in text:
+    sys.exit("PATCH FAILED: '</manifest>' closing tag not found.")
+text = text.replace("</manifest>", remove_perm + "</manifest>", 1)
+
 path.write_text(text)
-print("AndroidManifest.xml patched with the auth-callback deep-link intent-filter and AdMob App ID meta-data.")
+print("AndroidManifest.xml patched with the auth-callback deep-link intent-filter, AdMob App ID meta-data, and exact-alarm permission removal.")
