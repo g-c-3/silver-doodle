@@ -165,7 +165,13 @@
       smallIcon: 'ic_stat_match',
       largeIcon: 'notif_board_' + board,
       iconColor: '#ff6f91',
-      autoCancel: true
+      autoCancel: true,
+      // FIXED 2026-10-01 (device report): the plugin defaults this to true,
+      // and with exact-alarm permission absent it sends the player to the
+      // system "Alarms & reminders" settings page on every schedule() call
+      // (including the Profile test and every app-open sync). Reminders are
+      // deliberately inexact, so opt out explicitly.
+      isExactNotification: false
     };
     if (at) n.schedule = { at: new Date(at), allowWhileIdle: true };
     return n;
