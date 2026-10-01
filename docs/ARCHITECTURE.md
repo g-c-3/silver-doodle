@@ -107,10 +107,10 @@ account-deletion.html  served via GitHub Pages, new 2026-09-20 — the web-reque
 | 3 | Wild Animals | 🐯🐼🐘🦓🦒🦏 |
 | 4 | Faces & Emotions | 😍😎🥳😡🤯🥶 |
 | 5 | Birds | 🦉🦜🐤🦢🦩🦚 |
-| 6 | Sea Creatures | 🐠🐡🦈🐬🐳🦭 |
-| 7 | Ocean & Reef | 🦀🐙🪼🐚🦞🐌 |
-| 8 | Reptiles & Amphibians | 🐊🐍🦎🐸🦖🦕 |
-| 9 | Insects & Bugs | 🐝🐞🐛🕷️🪲🦋 |
+| 6 | Landmarks & Buildings | 🏰🗼🏯⛪🎡🌉 |
+| 7 | Camping & Outdoors | ⛺🔥🧭🔦🏔️🌲 |
+| 8 | Treasure & Jewels | 💎💍🏆🔑💰🎖️ |
+| 9 | Plants & Flowers | 🌹🌻🌵🍁🌸🌴 |
 | 10 | Fantasy Creatures | 🐉🦄🧜🧚🧌👻 |
 | 11 | Fruits | 🍏🍊🍌🍇🍓🍉 |
 | 12 | Tropical Fruits | 🍍🍑🥝🍒🥥🍋 |

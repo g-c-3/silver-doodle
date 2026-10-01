@@ -20,6 +20,10 @@ Most recent entry first.
 
 **Device-confirmed at session end:** the test notification works end to end and both UI fixes behaved correctly.
 
+**Design change:** theme 9 "Insects & Bugs" was replaced in place by "Plants & Flowers" (`attempt.js`; ARCHITECTURE.md theme table and DECISIONS.md updated). No server, database or migration change. Not yet seen on a device.
+
+**Design change (later):** themes 6, 7 and 8 were replaced in place by Landmarks & Buildings, Camping & Outdoors and Treasure & Jewels after an options review; `attempt.js`, ARCHITECTURE.md and DECISIONS.md updated. Not yet seen on a device.
+
 **Next session start point:** fill the two `privacy-policy.html` placeholders (effective date and contact email, both needed from the owner) and add a line about on-device reminder notifications; meanwhile, note whether the scheduled reminders arrive twice a day at varying times.
 
 ---

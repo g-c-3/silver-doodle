@@ -556,3 +556,19 @@ Implementation follows the same "source committed, generated output is not" patt
 
 **Known limitation.** Because reminders are planned ahead, they cannot know that the 12-attempt daily cap has been reached.
 
+## 2026-10-01 — Theme 9 "Insects & Bugs" replaced by "Plants & Flowers"
+
+**Change.** The Insects & Bugs theme was replaced in place by Plants & Flowers (rose, sunflower, cactus, maple leaf, cherry blossom, palm tree). The new theme occupies the same array position (index 8, DB theme_id 9), so `generate-daily-games`, the stored slot rows, `start-attempt` and `score-replay` need no change and no migration: theme identity is cosmetic and the engine only sees piece indexes 0-5.
+
+**Selection rules kept.** Every glyph is unique across all 26 themes (checked programmatically), Emoji 0.6 (well under the Emoji 12.0 floor behind minSdk 29), and distinct within the theme by colour and shape (candidates were rendered with Noto Color Emoji and compared). Mushroom and tulip were rejected as too close to the rose and maple leaf in colour.
+
+**Resume snapshots.** `RESUME_VERSION` was not bumped: snapshots store the theme index and moves, which stay valid; an attempt resumed on that level across the update would simply show the new emoji.
+
+## 2026-10-01 (later) — Themes 6, 7 and 8 replaced
+
+**Change.** Sea Creatures, Ocean & Reef, and Reptiles & Amphibians were replaced in place by Landmarks & Buildings, Camping & Outdoors, and Treasure & Jewels respectively, chosen from nine candidate themes presented beforehand. As with the theme 9 swap, array positions (index 5-7, DB theme_id 6-8) are unchanged, so no migration, server or replay change is needed.
+
+**Selection rules kept.** Every glyph remains unique across all 26 themes (checked programmatically), all are Emoji 11.0 or older (below the Emoji 12.0 floor behind minSdk 29), and each theme was compared for colour and shape distinction. Two candidate glyphs were changed during review for near-duplication or a clash with the Plants & Flowers theme.
+
+**Consequence.** All sea-animal and reptile/dinosaur glyphs left the game. Resume snapshots store theme index and moves, so `RESUME_VERSION` was not bumped.
+
