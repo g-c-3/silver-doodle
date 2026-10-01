@@ -102,10 +102,21 @@ const Attempt = (() => {
     { name: 'Wild Animals', emojis: ['🐯', '🐼', '🐘', '🦓', '🦒', '🦏'] },
     { name: 'Faces & Emotions', emojis: ['😍', '😎', '🥳', '😡', '🤯', '🥶'] },
     { name: 'Birds', emojis: ['🦉', '🦜', '🐤', '🦢', '🦩', '🦚'] },
-    { name: 'Sea Creatures', emojis: ['🐠', '🐡', '🦈', '🐬', '🐳', '🦐'] },
-    { name: 'Ocean & Reef', emojis: ['🦀', '🐙', '🦑', '🐚', '🦞', '🐌'] },
-    { name: 'Reptiles & Amphibians', emojis: ['🐊', '🐍', '🦎', '🐸', '🦖', '🦕'] },
-    { name: 'Insects & Bugs', emojis: ['🐝', '🐞', '🐛', '🕷️', '🐜', '🦋'] },
+    // 2026-10-01: slots 6-8 (index 5-7 / DB theme_id 6-8) previously held Sea
+    // Creatures, Ocean & Reef and Reptiles & Amphibians; replaced in place, so
+    // the daily-game shuffle, DB rows and server replay are untouched. All
+    // glyphs are Emoji <= 11.0, unique across the whole set (checked in code),
+    // and distinct by colour/shape within each theme.
+    { name: 'Landmarks & Buildings', emojis: ['🏰', '🗼', '🏯', '⛪', '🎡', '🌉'] },
+    { name: 'Camping & Outdoors', emojis: ['⛺', '🔥', '🧭', '🔦', '🏔️', '🌲'] },
+    { name: 'Treasure & Jewels', emojis: ['💎', '💍', '🏆', '🔑', '💰', '🎖️'] },
+    // 2026-10-01: replaces 'Insects & Bugs' (🐝 🐞 🐛 🕷️ 🐜 🦋) in the SAME array slot
+    // (index 8 / DB theme_id 9), so the daily-game shuffle, DB rows and server
+    // replay are untouched (theme identity is cosmetic; the engine only sees
+    // piece indexes 0-5). All six are Emoji 0.6, unique across the whole set,
+    // and distinct by colour and silhouette: red rose, yellow sunflower,
+    // green cactus, orange maple leaf, pink blossom, brown/olive palm.
+    { name: 'Plants & Flowers', emojis: ['🌹', '🌻', '🌵', '🍁', '🌸', '🌴'] },
     { name: 'Fantasy Creatures', emojis: ['🐉', '🦄', '🧜', '🧚', '🧙', '👻'] },
     { name: 'Fruits', emojis: ['🍏', '🍊', '🍌', '🍇', '🍓', '🍉'] },
     { name: 'Tropical Fruits', emojis: ['🍍', '🍑', '🥝', '🍒', '🥥', '🍋'] },
