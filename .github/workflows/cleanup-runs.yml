@@ -1,53 +1,49 @@
-name: Cleanup old runs
+name: Cleanup old releases
 
 on:
   workflow_dispatch:
     inputs:
-      keep_workflow:
-        description: "Keep the latest run of this workflow (empty = latest run overall)"
-        default: "Build Android APK"
+      delete_tags:
+        description: "Also delete the git tags of deleted releases"
+        type: boolean
+        default: true
       dry_run:
         description: "Only list what would be deleted"
         type: boolean
         default: true
 
 permissions:
-  actions: write
-  contents: read
+  contents: write
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete all runs except the latest one
+      - name: Delete all releases except the latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          KEEP_NAME: ${{ inputs.keep_workflow }}
+          DEL_TAGS: ${{ inputs.delete_tags }}
           DRY: ${{ inputs.dry_run }}
-          SELF_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          runs=$(gh api --paginate "repos/$REPO/actions/runs?per_page=100" \
-            --jq '.workflow_runs[] | {id, name, created_at}' | jq -s '.')
+          keep_id=$(gh api "repos/$REPO/releases/latest" --jq .id)
+          echo "Keeping release id $keep_id"
 
-          keep_id=$(echo "$runs" | jq -r --arg n "$KEEP_NAME" --arg s "$SELF_ID" \
-            '[.[] | select((.id|tostring)!=$s) | select($n=="" or .name==$n)]
-             | sort_by(.created_at) | last | .id // empty')
-
-          if [ -z "$keep_id" ]; then
-            echo "No matching run found. Aborting so nothing is lost."
-            exit 1
-          fi
-          echo "Keeping run $keep_id (and this cleanup run $SELF_ID)"
-
-          echo "$runs" | jq -r --arg k "$keep_id" --arg s "$SELF_ID" \
-            '.[] | select((.id|tostring)!=$k and (.id|tostring)!=$s) | .id' |
-          while read -r id; do
+          gh api --paginate "repos/$REPO/releases?per_page=100" \
+            --jq '.[] | "\(.id) \(.tag_name)"' |
+          while read -r id tag; do
+            if [ "$id" = "$keep_id" ]; then
+              echo "Keeping $tag"
+              continue
+            fi
             if [ "$DRY" = "true" ]; then
-              echo "[dry run] would delete $id"
-            else
-              echo "Deleting $id"
-              gh api -X DELETE "repos/$REPO/actions/runs/$id" || true
+              echo "[dry run] would delete release $tag"
+              continue
+            fi
+            echo "Deleting release $tag"
+            gh api -X DELETE "repos/$REPO/releases/$id" || true
+            if [ "$DEL_TAGS" = "true" ]; then
+              gh api -X DELETE "repos/$REPO/git/refs/tags/$tag" || true
             fi
           done
