@@ -1,0 +1,53 @@
+name: Cleanup old runs
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_workflow:
+        description: "Keep the latest run of this workflow (empty = latest run overall)"
+        default: "Build Android APK"
+      dry_run:
+        description: "Only list what would be deleted"
+        type: boolean
+        default: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete all runs except the latest one
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          KEEP_NAME: ${{ inputs.keep_workflow }}
+          DRY: ${{ inputs.dry_run }}
+          SELF_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          runs=$(gh api --paginate "repos/$REPO/actions/runs?per_page=100" \
+            --jq '.workflow_runs[] | {id, name, created_at}' | jq -s '.')
+
+          keep_id=$(echo "$runs" | jq -r --arg n "$KEEP_NAME" --arg s "$SELF_ID" \
+            '[.[] | select((.id|tostring)!=$s) | select($n=="" or .name==$n)]
+             | sort_by(.created_at) | last | .id // empty')
+
+          if [ -z "$keep_id" ]; then
+            echo "No matching run found. Aborting so nothing is lost."
+            exit 1
+          fi
+          echo "Keeping run $keep_id (and this cleanup run $SELF_ID)"
+
+          echo "$runs" | jq -r --arg k "$keep_id" --arg s "$SELF_ID" \
+            '.[] | select((.id|tostring)!=$k and (.id|tostring)!=$s) | .id' |
+          while read -r id; do
+            if [ "$DRY" = "true" ]; then
+              echo "[dry run] would delete $id"
+            else
+              echo "Deleting $id"
+              gh api -X DELETE "repos/$REPO/actions/runs/$id" || true
+            fi
+          done
